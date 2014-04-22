@@ -26,7 +26,7 @@ reader.on("sam", function(samline) {
 reader.on("end", function() {
   console.log("all bam alignments have read.");
 });
-```js
+```
 
 bamdata
 ------------------
