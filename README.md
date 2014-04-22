@@ -20,7 +20,7 @@ reader.on("bam", function(bamdata) {
 
 reader.on("sam", function(samline) {
   // samline: sam string
-  console.log(samline.split("\t");
+  console.log(samline.split("\t"));
 });
 
 reader.on("end", function() {
