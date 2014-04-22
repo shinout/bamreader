@@ -1,0 +1,35 @@
+{ "name":           "bamreader",
+  "version":        "0.0.1",
+  "description":    "an object reading bams",
+  "homepage":       "http://github.com/shinout/bamreader",
+  "author":         "Shin Suzuki<shinout310@gmail.com>",
+  "keywords": [
+    "bam", "bioinfo", "bio", "sam", "samtools", "ngs", "sequencer", "mapping"
+  ],
+  "main":           "lib/bamreader",
+  "scripts": {
+    "build":        "coffee --bare --compile --output lib/bamreader src/bamreader.coffee",
+    "prepublish":   "coffee --bare --compile --output lib/bamreader src/bamreader.coffee",
+    "postpublish":  "rm -rf lib"
+  },
+  "engines": {
+    "node":         ">= 0.8.0"
+  },
+  "dependencies": {
+  },
+  "devDependencies": {
+    "coffee-script": ">= 1.7.1"
+  },
+  "repository": {
+    "type":   "git",
+    "url":    "http://github.com/shinout/bamreader"
+  },
+  "bugs": {
+    "url":    "http://github.com/shinout/bamreader/issues"
+  },
+  "licenses": [
+    { "type": "MIT",
+      "url":  "http://github.com/shinout/bamreader/blob/master/MIT-LICENSE"
+    }
+  ]
+}
