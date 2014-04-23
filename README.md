@@ -6,7 +6,7 @@ Uses samtools If exists, otherwise uses a native parser.
 installation
 ----------------
 ```bash
-$ npm instal bamreader
+$ npm install bamreader
 ```
 
 usage
