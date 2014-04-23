@@ -5,7 +5,7 @@ BAMReader is a reader to parse .bam files.
 installation
 ----------------
 ```bash
-$ npm instal bamreader
+$ npm install bamreader
 ```
 
 usage
