@@ -1,6 +1,7 @@
 BAMReader
 ==========
 BAMReader is a reader to parse .bam files.
+Uses samtools If exists, otherwise uses a native parser.
 
 installation
 ----------------
@@ -27,6 +28,9 @@ reader.on("end", function() {
   console.log("all bam alignments have read.");
 });
 ```
+options for BAMReader.create
+----------------------------
+- native : read bam without samtools (slower than using samtools)
 
 bamdata
 ------------------
@@ -41,9 +45,14 @@ bamdata
 - tlen    : template length
 - seq     : segment jsequence
 - qual    : ASCII of base quality plus 33
-- refid   : id of the mapped reference sequence
-- nrefid  : id of the reference sequence to which the next read mapped
 - start   : 0-based leftmost mapping position
 - flags   : information of flags
 - tagstr  : optional fields as string
-- tags    : optional fields as structured data (for detail, please dump it...)
+- tags    : optional fields as structured data described in "bamdata.tags" section
+
+bamdata.tags
+------------------
+- (key): tag name (two string character)
+- (value): type: data type, value: data
+
+if data type is "B", value[0] is subtype, value.slice(1) is the array of data.

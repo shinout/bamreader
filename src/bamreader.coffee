@@ -3,6 +3,7 @@
 ####
 createReadStream = require("fs").createReadStream
 createInflateRaw = require("zlib").createInflateRaw
+childProcess = require("child_process")
 
 SEQ_ARR = "=ACMGRSVTWYHKDBN".split("")
 CIGAR_ARR = "MIDNSHP=X".split("")
@@ -22,7 +23,8 @@ FLAGS = [
 
 class BAMReader
   constructor: (@bamfile, @options={})->
-    process.nextTick ()=> @begin()
+    childProcess.exec "which samtools", (e, stdout,stderr)=>
+      if stderr or @options.native then @begin() else @beginSamtools()
 
   @create: (bamfile, options={})->
     return new BAMReader(bamfile, options)
@@ -33,6 +35,65 @@ class BAMReader
       when "bam" then @onBam = fn
       when "end" then @onEnd = fn
       when "header" then @onHeader = fn
+
+  beginSamtools: ()->
+    onBam = @onBam
+    onSam = @onSam
+    onEnd = @onEnd
+    onHeader = @onHeader
+    options = @options
+
+    samtools = childProcess.spawn "samtools", ["view", "-h", @bamfile]
+    lines = require("linestream").create(samtools.stdout)
+    readingHeader = true
+    headerLines = []
+
+    lines.on "data", (samline)->
+      if readingHeader
+        if samline.charAt(0) is '@'
+          headerLines.push samline
+        else
+          readingHeader = false
+          onHeader headerLines.join("\n") if onHeader
+          headerLines = null
+      else
+        onSam samline if onSam
+        if onBam
+          sam = samline.split("\t")
+          # output
+          bamline =
+            qname   : sam[0]
+            flag    : Number sam[1]
+            rname   : sam[2]
+            pos     : Number sam[3]
+            mapq    : Number sam[4]
+            cigar   : sam[5]
+            rnext   : sam[6]
+            pnext   : Number(sam[7])+1
+            tlen    : sam[8]
+            seq     : sam[9]
+            qual    : sam[10]
+            tags    : {}
+            start   : Number(sam[3])-1
+            flags   : {}
+            tagstr  : sam.slice(11).join("\t")
+          bamline.flags[flagname] = !!(bamline.flag & (0x01 << i)) for flagname,i in FLAGS
+          for tag in sam.slice(11)
+            val = tag.split(":")
+            tag = val[0]
+            type = val[1]
+            switch type
+              when "i","f" then value = Number val[2]
+              when "B"
+                value = val[2].split(",")
+                subtype = value[0]
+                if subtype in ["c","C","s","S","i","I","f"]
+                  value = (Number v for v in value)
+                  value[0] = subtype
+              else
+                value = val[2]
+            bamline.tags[tag] = type: type, value: value
+          onBam bamline
 
   begin: ()->
     onBam = @onBam
@@ -239,26 +300,28 @@ class BAMReader
               cursor+=4
               switch subtype
                 when "c"
-                  tags[tag] = type: valtype + ":#{subtype}", value: (buf.readInt8 cursor+i for i in [0...arrayLen])
+                  tags[tag] = type: valtype, value: (buf.readInt8 cursor+i for i in [0...arrayLen])
                   cursor+=arrayLen
                 when "C"
-                  tags[tag] = type: valtype + ":#{subtype}", value: (buf.readUInt8 cursor+i for i in [0...arrayLen])
+                  tags[tag] = type: valtype, value: (buf.readUInt8 cursor+i for i in [0...arrayLen])
                   cursor+=arrayLen
                 when "s"
-                  tags[tag] = type: valtype + ":#{subtype}", value: (buf.readInt16LE cursor+i*2 for i in [0...arrayLen])
+                  tags[tag] = type: valtype, value: (buf.readInt16LE cursor+i*2 for i in [0...arrayLen])
                   cursor+=arrayLen*2
                 when "S"
-                  tags[tag] = type: valtype + ":#{subtype}", value: (buf.readUInt16LE cursor+i*2 for i in [0...arrayLen])
+                  tags[tag] = type: valtype, value: (buf.readUInt16LE cursor+i*2 for i in [0...arrayLen])
                   cursor+=arrayLen*2
                 when "i"
-                  tags[tag] = type: valtype + ":#{subtype}", value: (buf.readInt32LE cursor+i*4 for i in [0...arrayLen])
+                  tags[tag] = type: valtype, value: (buf.readInt32LE cursor+i*4 for i in [0...arrayLen])
                   cursor+=arrayLen*4
                 when "I"
-                  tags[tag] = type: valtype + ":#{subtype}", value: (buf.readUInt32LE cursor+i*4 for i in [0...arrayLen])
+                  tags[tag] = type: valtype, value: (buf.readUInt32LE cursor+i*4 for i in [0...arrayLen])
                   cursor+=arrayLen*4
                 when "f"
-                  tags[tag] = type: valtype + ":#{subtype}", value: (buf.readFloatLE cursor+i*4 for i in [0...arrayLen])
+                  tags[tag] = type: valtype, value: (buf.readFloatLE cursor+i*4 for i in [0...arrayLen])
                   cursor+=arrayLen*4
+              value.unshift subtype
+
             when "Z"
               zLen = 0
               zLen++ while buf[cursor+zLen] isnt 0x00
@@ -285,16 +348,12 @@ class BAMReader
           tlen    : tLen
           seq     : seq
           qual    : qual
-          #phredq : phredQuals
-          refid   : refId
-          nrefid  : nextRefId
           tags    : tags
           start   : pos
           flags   : flags
-          #cigars : cigars # unimplemented
-          #count  : count
-          tagstr  : ([name, tag.type, tag.value].join(":") for name,tag of tags).join("\t")
+          tagstr  : ([name, tag.type, if Array.isArray tag.value then tag.value.join(",") else tag.value].join(":") for name,tag of tags).join("\t")
 
+        console.log tags,bamline.tagstr
         onBam bamline if onBam
 
         if onSam
