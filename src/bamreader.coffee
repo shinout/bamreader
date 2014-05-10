@@ -4,6 +4,7 @@
 createReadStream = require("fs").createReadStream
 createInflateRaw = require("zlib").createInflateRaw
 childProcess = require("child_process")
+require("termcolor").define
 
 SEQ_ARR = "=ACMGRSVTWYHKDBN".split("")
 CIGAR_ARR = "MIDNSHP=X".split("")
@@ -23,8 +24,10 @@ FLAGS = [
 
 class BAMReader
   constructor: (@bamfile, @options={})->
+    @bamfile.pause() if @bamfile.readable
+
     childProcess.exec "which samtools", (e, stdout,stderr)=>
-      if stderr or @options.native then @begin() else @beginSamtools()
+      if e.message or stderr or @options.native then @begin() else @beginSamtools()
 
   @create: (bamfile, options={})->
     return new BAMReader(bamfile, options)
@@ -47,6 +50,8 @@ class BAMReader
     lines = require("linestream").create(samtools.stdout)
     readingHeader = true
     headerLines = []
+
+    lines.on "end", onEnd if onEnd
 
     lines.on "data", (samline)->
       if readingHeader
@@ -143,7 +148,11 @@ class BAMReader
       engine.end buffer
       flow()
 
-    rstream = createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
+    if @bamfile.readable
+      rstream = @bamfile
+      rstream.resume()
+    else
+      rstream = createReadStream(@bamfile, highWaterMark: 1024 * 1024 * 1024 - 1)
 
     remainedBuffer = new Buffer(0)
 
@@ -353,7 +362,6 @@ class BAMReader
           flags   : flags
           tagstr  : ([name, tag.type, if Array.isArray tag.value then tag.value.join(",") else tag.value].join(":") for name,tag of tags).join("\t")
 
-        console.log tags,bamline.tagstr
         onBam bamline if onBam
 
         if onSam

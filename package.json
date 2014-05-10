@@ -15,7 +15,8 @@
     "node":         ">= 0.8.0"
   },
   "dependencies": {
-    "linestream": ">= 0.3.2"
+    "linestream": ">= 0.3.2",
+    "termcolor" : ">= 0.2.0"
   },
   "devDependencies": {
     "coffee-script": ">= 1.7.1"
