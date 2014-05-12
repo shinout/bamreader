@@ -1,36 +1,43 @@
-{ "name":           "bamreader",
-  "version":        "0.0.5",
-  "description":    "an object reading bams",
-  "homepage":       "http://github.com/shinout/bamreader",
-  "author":         "Shin Suzuki<shinout310@gmail.com>",
+{
+  "name": "bamreader",
+  "version": "0.0.6",
+  "description": "an object reading bams",
+  "homepage": "http://github.com/shinout/bamreader",
+  "author": "Shin Suzuki<shinout310@gmail.com>",
   "keywords": [
-    "bam", "bioinfo", "bio", "sam", "samtools", "ngs", "sequencer", "mapping"
+    "bam",
+    "bioinfo",
+    "bio",
+    "sam",
+    "samtools",
+    "ngs",
+    "sequencer",
+    "mapping"
   ],
-  "main":           "lib/bamreader/bamreader.js",
-  "scripts": {
-    "build":        "coffee --bare --compile --output lib/bamreader src/bamreader.coffee",
-    "prepublish":   "coffee --bare --compile --output lib/bamreader src/bamreader.coffee"
-  },
+  "main": "lib/bamreader.js",
   "engines": {
-    "node":         ">= 0.8.0"
+    "node": ">= 0.8.0"
   },
   "dependencies": {
     "linestream": ">= 0.3.2",
-    "termcolor" : ">= 0.2.0"
+    "termcolor": ">= 0.2.0"
   },
   "devDependencies": {
-    "coffee-script": ">= 1.7.1"
+    "coffee-script": ">= 1.7.1",
+    "grunt": "^0.4.4",
+    "grunt-contrib-coffee": "^0.10.1"
   },
   "repository": {
-    "type":   "git",
-    "url":    "http://github.com/shinout/bamreader"
+    "type": "git",
+    "url": "http://github.com/shinout/bamreader"
   },
   "bugs": {
-    "url":    "http://github.com/shinout/bamreader/issues"
+    "url": "http://github.com/shinout/bamreader/issues"
   },
   "licenses": [
-    { "type": "MIT",
-      "url":  "http://github.com/shinout/bamreader/blob/master/MIT-LICENSE"
+    {
+      "type": "MIT",
+      "url": "http://github.com/shinout/bamreader/blob/master/MIT-LICENSE"
     }
   ]
 }
