@@ -126,9 +126,11 @@ class BAMReader
       buffers = []
 
       engine.on "error", (err)->
-        engine.removeListener "end"
-        engine.removeListener "readable", flow
+        # engine.removeListener "end"
+        # engine.removeListener "readable", flow
         console.error err
+        console.error "(lastXi: #{lastXi})"
+        console.error "----------------------------------"
 
       engine.on "end", ->
         buf = Buffer.concat buffers, nread
