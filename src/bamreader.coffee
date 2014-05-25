@@ -59,48 +59,49 @@ class BAMReader
       if readingHeader
         if samline.charAt(0) is '@'
           headerLines.push samline
+          return
         else
           readingHeader = false
           onHeader headerLines.join("\n") if onHeader
           headerLines = null
-      else
-        onSam samline if onSam
-        if onBam
-          sam = samline.split("\t")
-          # output
-          bamline =
-            qname   : sam[0]
-            flag    : Number sam[1]
-            rname   : sam[2]
-            pos     : Number sam[3]
-            mapq    : Number sam[4]
-            cigar   : sam[5]
-            rnext   : sam[6]
-            pnext   : Number(sam[7])+1
-            tlen    : sam[8]
-            seq     : sam[9]
-            qual    : sam[10]
-            tags    : {}
-            start   : Number(sam[3])-1
-            flags   : {}
-            tagstr  : sam.slice(11).join("\t")
-          bamline.flags[flagname] = !!(bamline.flag & (0x01 << i)) for flagname,i in FLAGS
-          for tag in sam.slice(11)
-            val = tag.split(":")
-            tag = val[0]
-            type = val[1]
-            switch type
-              when "i","f" then value = Number val[2]
-              when "B"
-                value = val[2].split(",")
-                subtype = value[0]
-                if subtype in ["c","C","s","S","i","I","f"]
-                  value = (Number v for v in value)
-                  value[0] = subtype
-              else
-                value = val[2]
-            bamline.tags[tag] = type: type, value: value
-          onBam bamline
+
+      onSam samline if onSam
+      if onBam
+        sam = samline.split("\t")
+        # output
+        bamline =
+          qname   : sam[0]
+          flag    : Number sam[1]
+          rname   : sam[2]
+          pos     : Number sam[3]
+          mapq    : Number sam[4]
+          cigar   : sam[5]
+          rnext   : sam[6]
+          pnext   : Number(sam[7])+1
+          tlen    : sam[8]
+          seq     : sam[9]
+          qual    : sam[10]
+          tags    : {}
+          start   : Number(sam[3])-1
+          flags   : {}
+          tagstr  : sam.slice(11).join("\t")
+        bamline.flags[flagname] = !!(bamline.flag & (0x01 << i)) for flagname,i in FLAGS
+        for tag in sam.slice(11)
+          val = tag.split(":")
+          tag = val[0]
+          type = val[1]
+          switch type
+            when "i","f" then value = Number val[2]
+            when "B"
+              value = val[2].split(",")
+              subtype = value[0]
+              if subtype in ["c","C","s","S","i","I","f"]
+                value = (Number v for v in value)
+                value[0] = subtype
+            else
+              value = val[2]
+          bamline.tags[tag] = type: type, value: value
+        onBam bamline
 
     if @bamfile.readable
       @bamfile.pipe samtools.stdin
