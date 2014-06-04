@@ -48,14 +48,12 @@ class BAMReader
 
 
     if isSam
+      samtools = null
       lines = require("linestream").create(@bamfile)
     else
       file = if @bamfile.readable then "-" else @bamfile
       samtools = childProcess.spawn "samtools", ["view", "-h", file]
       lines = require("linestream").create(samtools.stdout)
-      if @bamfile.readable
-        @bamfile.pipe samtools.stdin
-        @bamfile.resume()
 
     readingHeader = true
     headerLines = []
@@ -109,6 +107,10 @@ class BAMReader
               value = val[2]
           bamline.tags[tag] = type: type, value: value
         onBam bamline
+
+    if @bamfile.readable
+      @bamfile.pipe samtools.stdin if samtools
+      @bamfile.resume()
 
   begin: ()->
     onBam = @onBam
