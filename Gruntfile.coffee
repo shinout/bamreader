@@ -4,7 +4,7 @@ module.exports = (grunt) ->
     coffee:
       compile:
         files:
-          "lib/bamreader.js": "src/bamreader.coffee"
+          "lib/bamreader.js": ["src/bamreader.coffee", "src/CIGAR.coffee"]
 
   grunt.loadNpmTasks "grunt-contrib-coffee"
   grunt.registerTask "default", ["coffee"]
