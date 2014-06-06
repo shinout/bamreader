@@ -20,6 +20,7 @@ FLAGS = [
   "secondary"
   "lowquality"
   "duplicate"
+  "supplementary"
 ]
 
 class BAMReader
