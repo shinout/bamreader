@@ -28,6 +28,7 @@ class BAMReader
     @bamfile.pause() if @bamfile.readable
 
     childProcess.exec "which samtools", (e, stdout,stderr)=>
+      @beginSamtools(@options.sam) if @options.samtools
       if not @options.sam and (e or stderr or @options.native) then @begin() else @beginSamtools(@options.sam)
 
   @create: (bamfile, options={})->
@@ -41,6 +42,7 @@ class BAMReader
       when "header" then @onHeader = fn
 
   beginSamtools: (isSam)->
+    samtoolsCmd = @options.samtools or "samtools"
     onBam = @onBam
     onSam = @onSam
     onEnd = @onEnd
@@ -53,7 +55,7 @@ class BAMReader
       lines = require("linestream").create(@bamfile)
     else
       file = if @bamfile.readable then "-" else @bamfile
-      samtools = childProcess.spawn "samtools", ["view", "-h", file]
+      samtools = childProcess.spawn samtoolsCmd, ["view", "-h", file]
       lines = require("linestream").create(samtools.stdout)
 
     readingHeader = true
