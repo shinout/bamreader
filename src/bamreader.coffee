@@ -125,7 +125,7 @@ class BAMReader
     count = 0
     xi = 0
     refs = {}
-    curXi = 1
+    curXi = 0
     lastXi = 0
     inflatedBuffers = {}
 
@@ -144,14 +144,11 @@ class BAMReader
       engine.on "end", ->
         buf = Buffer.concat buffers, nread
         buffers = []
-        if i is 0
-          readHeader buf
-        else
-          inflatedBuffers[i] = buf
+        inflatedBuffers[i] = buf
         engine.close()
 
         while inflatedBuffer = inflatedBuffers[curXi]
-          readAlignment inflatedBuffer, i
+          parseBam inflatedBuffer, i
           delete inflatedBuffers[curXi]
           curXi++
         onEnd() if onEnd and curXi is lastXi
@@ -193,9 +190,25 @@ class BAMReader
     rstream.on "end", ()->
       lastXi = xi
 
+    # parsing deflated buffers
+    readingHeader = true
+    bambuf4h = new Buffer(0)
+    parseBam = (bambuf, k)->
+      if readingHeader
+        bambuf4h = Buffer.concat [bambuf4h, bambuf]
+        try
+          bambuf = readHeader bambuf4h
+          return if bambuf.length is 0
+        catch e
+          # console.error e
+          return
+        readingHeader = false
+      readAlignment bambuf, k
+      
     # reading bam header
     readHeader = (bambuf)->
       headerLen = bambuf.readInt32LE(4)
+      throw new Error("header len") if bambuf.length < headerLen + 16
       header = bambuf.slice(8,headerLen+8).toString("ascii")
       cursor = headerLen + 8
       nRef = bambuf.readInt32LE cursor
@@ -209,7 +222,9 @@ class BAMReader
         refLen = bambuf.readInt32LE cursor
         cursor+=4
         refs[i] = name: name, len: refLen
+
       onHeader header if onHeader
+      return bambuf.slice(cursor)
 
     # reading bam alignment data
     readAlignment = (buf, k)->
