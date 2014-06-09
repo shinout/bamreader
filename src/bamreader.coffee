@@ -86,7 +86,7 @@ class BAMReader
           cigar   : sam[5]
           rnext   : sam[6]
           pnext   : Number(sam[7])+1
-          tlen    : sam[8]
+          tlen    : Number sam[8]
           seq     : sam[9]
           qual    : sam[10]
           tags    : {}
