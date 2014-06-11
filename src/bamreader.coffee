@@ -1,7 +1,10 @@
 ###
 # BAMReader by Shin Suzuki(@shinout)
 ####
-createReadStream = require("fs").createReadStream
+BGZF_ESTIMATED_LEN = 65536
+BGZF_HEADER = new Buffer("1f 8b 08 04 00 00 00 00 00 ff 06 00 42 43 02 00".split(" ").join(""), "hex")
+fs = require("fs")
+createReadStream = fs.createReadStream
 createInflateRaw = require("zlib").createInflateRaw
 childProcess = require("child_process")
 require("termcolor").define
@@ -122,92 +125,141 @@ class BAMReader
     onHeader = @onHeader
     options = @options
 
-    xi = 0
-    refs = {}
-    curXi = 0
-    lastXi = 0
-    inflatedBuffers = {}
-
-    inflateRaw = (i, buffer)->
-      engine = createInflateRaw chunkSize: 65535
-      nread = 0
-      buffers = []
-
-      engine.on "error", (err)->
-        # engine.removeListener "end"
-        # engine.removeListener "readable", flow
-        console.error err
-        console.error "(lastXi: #{lastXi})"
-        console.error "----------------------------------"
-
-      engine.on "end", ->
-        buf = Buffer.concat buffers, nread
-        buffers = []
-        inflatedBuffers[i] = buf
-        engine.close()
-
-        while inflatedBuffer = inflatedBuffers[curXi]
-          parseBam inflatedBuffer, i
-          delete inflatedBuffers[curXi]
-          curXi++
-        onEnd() if onEnd and curXi is lastXi
-
-      flow = ->
-        while null isnt (chunk = engine.read())
-          buffers.push chunk
-          nread += chunk.length
-        engine.once "readable", flow
-
-      engine.end buffer
-      flow()
-
     if @bamfile.readable
       rstream = @bamfile
       rstream.resume()
     else
       rstream = createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
 
+    refs = {}
+    currentIdx = 0
+    readIdx = 0
+    lastIdx = 0
+    inflatedBuffers = {}
+
+    # read deflated buffers
     remainedBuffer = new Buffer(0)
     rstream.on "data", (newBuffer)->
       buf = Buffer.concat [remainedBuffer, newBuffer], remainedBuffer.length + newBuffer.length
-      loop
-        if buf.length <= 26
-          remainedBuffer = if buf.length then buf else new Buffer(0)
-          break
+      # split deflated buffer
+      [defBufs, remainedBuffer] = BAMReader.splitDeflatedBuffer(buf)
 
-        cdataLen = buf.readUInt16LE(16)- 25
-        if buf.length < cdataLen + 26
-          remainedBuffer = buf
-          break
+      for defBuf in defBufs
+        do (k = currentIdx++) ->
+          BAMReader.inflateRaw defBuf, (e, infBuf)->
+            inflatedBuffers[k] = infBuf
+            readInflatedBuffers()
 
-        # unzip
-        cdataBuffer = buf.slice(18, cdataLen + 18)
-        inflateRaw xi++, cdataBuffer
-        buf = buf.slice(26+cdataLen)
+    # reads inflated buffers
+    bambuf4h = new Buffer(0)
+    readingHeader = true
+    readInflatedBuffers = ->
+      while bambuf = inflatedBuffers[readIdx]
+        delete inflatedBuffers[readIdx]
+        readIdx++
+        # read header
+        if readingHeader
+          bambuf4h = Buffer.concat [bambuf4h, bambuf]
+          try
+            {refs, headerStr, bambuf} = BAMReader.readHeaderFromInflatedBuffer bambuf4h, true
+            readingHeader = false
+            onHeader headerStr if onHeader
+            return if bambuf.length is 0
+          catch e
+            continue
+
+        # read alignments
+        bams = BAMReader.readAlignmentsFromInflatedBuffer bambuf, refs
+        onBam bamline for bamline in bams if onBam
+        onSam(BAMReader.bamToSam(bamline)) for bamline in bams if onSam
+
+      onEnd() if onEnd and currentIdx is lastIdx
 
     rstream.on "end", ()->
-      lastXi = xi
+      lastIdx = currentIdx
 
-    # parsing deflated buffers
-    readingHeader = true
-    bambuf4h = new Buffer(0)
-    parseBam = (bambuf, k)->
-      if readingHeader
-        bambuf4h = Buffer.concat [bambuf4h, bambuf]
+  # read header from a bamfile
+  @readHeader = (bamfile, cb)->
+    infBuf = new Buffer(0)
+    offset = 0
+    fd = fs.openSync bamfile, "r"
+
+    getHeader = ->
+      [bufToInflate, next] = BAMReader.getDeflatedBuffer(fd, offset)
+      offset = next
+
+      BAMReader.inflateRaw bufToInflate, (e, _infBuf)->
+        infBuf = Buffer.concat [infBuf, _infBuf]
         try
-          {refs, headerStr, bambuf} = BAMReader.readHeader bambuf4h, true
-          onHeader headerStr if onHeader
-          return if bambuf.length is 0
+          headerInfo = BAMReader.readHeaderFromInflatedBuffer(infBuf)
+          headerInfo.offset = offset
+          headerInfo.fd = fd
+          cb(null, headerInfo)
         catch e
-          # console.error e
-          return
-        readingHeader = false
-      bams = BAMReader.readAlignments bambuf, refs
-      onBam bamline for bamline in bams if onBam
-      onSam(BAMReader.bamToSam(bamline)) for bamline in bams if onSam
+          return getHeader()
+    getHeader()
+
+  @splitBody = (bamfile, num, headerInfo, cb)->
+    _splitBody = (e, headerInfo)->
+      size = (fs.statSync bamfile).size
+      offset = headerInfo.offset
+      fd = headerInfo.fd or fs.openSync(bamfile, "r")
+      interval = Math.floor((size-offset)/num)
+      positions = []
+
+      buflen = Math.min(BGZF_ESTIMATED_LEN, interval)
+
+      for k in [0...num]
+        # finding accurate position of BGZF
+        start = interval * k + offset-1
+        buf = new Buffer(buflen)
+        fs.readSync fd, buf, 0, buflen, start
+        cursor = -1
+        match = false
+        until match or cursor + 16 > buf.length
+          cursor++
+          headerCandidate = buf.slice(cursor, cursor+16)
+          match = true
+          for b,i in BGZF_HEADER
+            if b isnt headerCandidate[i]
+              match = false
+              break
+        positions.push(start + cursor) if match
+      fs.closeSync(fd)
+      cb(null, positions: positions, header: headerInfo, size: size)
+    if headerInfo
+      _splitBody(null, headerInfo)
+    else
+      BAMReader.readHeader(bamfile, _splitBody)
+
+  @getDeflatedBuffer = (fd, offset)->
+    defBuf = new Buffer(0)
+    k = 0
+    loop
+      _defBuf = new Buffer(BGZF_ESTIMATED_LEN)
+      fs.readSync fd, _defBuf, 0, BGZF_ESTIMATED_LEN, offset + k * BGZF_ESTIMATED_LEN
+      for i in [0...16]
+        throw new Error("not BGZF (offset=#{offset}, i=#{i})") if _defBuf[i] isnt BGZF_HEADER[i]
+      defBuf = Buffer.concat [defBuf, _defBuf]
+      delta = defBuf.readUInt16LE(16) + 1
+      break if defBuf.length >= delta
+      k++
+
+    bufToInflate = defBuf.slice(18, delta-8)
+    return [bufToInflate, offset + delta]
+
+  @splitDeflatedBuffer = (defBuf)->
+    defBufs = []
+    loop
+      return [defBufs,defBuf] if defBuf.length <= 26
+      cdataLen = defBuf.readUInt16LE(16)- 25
+      return [defBufs,defBuf] if defBuf.length < cdataLen + 26
+      # unzip
+      defBufs.push defBuf.slice(18, cdataLen + 18)
+      defBuf = defBuf.slice(26+cdataLen)
 
   # reading bam header
-  @readHeader = (bambuf, ifReturnsBamBuf)->
+  @readHeaderFromInflatedBuffer = (bambuf, ifReturnsBamBuf)->
     refs = {}
     headerLen = bambuf.readInt32LE(4)
     throw new Error("header len") if bambuf.length < headerLen + 16
@@ -230,7 +282,7 @@ class BAMReader
     return ret
 
   # reading bam alignment data
-  @readAlignments = (buf, refs)->
+  @readAlignmentsFromInflatedBuffer = (buf, refs)->
     bams = []
     while buf.length
       cursor = 0
@@ -412,6 +464,33 @@ class BAMReader
       bamline.qual
       bamline.tagstr
     ].join("\t")
+
+  @inflateRaw = (defBuf, callback)->
+    engine = createInflateRaw chunkSize: 65535
+    nread = 0
+    error = false
+    infBufs = []
+
+    engine.on "error", (err)->
+      error = true
+      callback(err)
+
+    engine.on "end", ->
+      return if error
+      infBuf = Buffer.concat infBufs, nread
+      infBufs = []
+      engine.close()
+      callback(null, infBuf)
+
+    flow = ->
+      while null isnt (chunk = engine.read())
+        infBufs.push chunk
+        nread += chunk.length
+      engine.once "readable", flow
+
+    engine.end defBuf
+    flow()
+
 
 
 module.exports = BAMReader
