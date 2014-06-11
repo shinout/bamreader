@@ -122,7 +122,6 @@ class BAMReader
     onHeader = @onHeader
     options = @options
 
-    count = 0
     xi = 0
     refs = {}
     curXi = 0
@@ -166,10 +165,9 @@ class BAMReader
       rstream = @bamfile
       rstream.resume()
     else
-      rstream = createReadStream(@bamfile, highWaterMark: 1024 * 1024 * 1024 - 1)
+      rstream = createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
 
     remainedBuffer = new Buffer(0)
-
     rstream.on "data", (newBuffer)->
       buf = Buffer.concat [remainedBuffer, newBuffer], remainedBuffer.length + newBuffer.length
       loop
@@ -197,220 +195,223 @@ class BAMReader
       if readingHeader
         bambuf4h = Buffer.concat [bambuf4h, bambuf]
         try
-          bambuf = readHeader bambuf4h
+          {refs, headerStr, bambuf} = BAMReader.readHeader bambuf4h, true
+          onHeader headerStr if onHeader
           return if bambuf.length is 0
         catch e
           # console.error e
           return
         readingHeader = false
-      readAlignment bambuf, k
-      
-    # reading bam header
-    readHeader = (bambuf)->
-      headerLen = bambuf.readInt32LE(4)
-      throw new Error("header len") if bambuf.length < headerLen + 16
-      header = bambuf.slice(8,headerLen+8).toString("ascii")
-      cursor = headerLen + 8
-      nRef = bambuf.readInt32LE cursor
+      bams = BAMReader.readAlignments bambuf, refs
+      onBam bamline for bamline in bams if onBam
+      onSam(BAMReader.bamToSam(bamline)) for bamline in bams if onSam
+
+  # reading bam header
+  @readHeader = (bambuf, ifReturnsBamBuf)->
+    refs = {}
+    headerLen = bambuf.readInt32LE(4)
+    throw new Error("header len") if bambuf.length < headerLen + 16
+    headerStr = bambuf.slice(8,headerLen+8).toString("ascii")
+    cursor = headerLen + 8
+    nRef = bambuf.readInt32LE cursor
+    cursor+=4
+
+    for i in [0...nRef]
+      nameLen = bambuf.readInt32LE cursor
+      cursor+=4
+      name = bambuf.slice(cursor, cursor+nameLen-1).toString("ascii")
+      cursor+=nameLen
+      refLen = bambuf.readInt32LE cursor
+      cursor+=4
+      refs[i] = name: name, len: refLen
+
+    ret = refs: refs, headerStr: headerStr
+    ret.bambuf = bambuf.slice(cursor) if ifReturnsBamBuf
+    return ret
+
+  # reading bam alignment data
+  @readAlignments = (buf, refs)->
+    bams = []
+    while buf.length
+      cursor = 0
+      blockSize = buf.readInt32LE cursor
+
+      break if buf.length < blockSize
       cursor+=4
 
-      for i in [0...nRef]
-        nameLen = bambuf.readInt32LE cursor
+      refId = buf.readInt32LE cursor
+      rname = if refId is -1 then "*" else refs[refId].name
+      cursor+=4
+
+      pos = buf.readInt32LE cursor
+      cursor+=4
+
+      readNameLen = buf.readUInt8 cursor
+      cursor++
+
+      mapq = buf.readUInt8 cursor
+      cursor++
+
+      bin = buf.readUInt16LE cursor
+      cursor+=2
+
+      cigarLen = buf.readUInt16LE cursor
+      cursor+=2
+
+      flag = buf.readUInt16LE cursor
+      flags = {}
+      flags[flagname] = !!(flag & (0x01 << i)) for flagname,i in FLAGS
+      cursor+=2
+
+      seqLen = buf.readInt32LE cursor
+      cursor+=4
+
+      nextRefId = buf.readInt32LE cursor
+      rnext = if nextRefId is -1 then "*" else refs[nextRefId].name
+      cursor+=4
+
+      nextPos = buf.readInt32LE cursor
+      cursor+=4
+
+      tLen = buf.readInt32LE cursor
+      cursor+=4
+
+      readName = buf.slice(cursor, cursor+readNameLen-1).toString("ascii")
+      cursor+=readNameLen
+
+      cigar = []
+      for i in [0...cigarLen]
+        num = buf.readUInt32LE(cursor, cursor+4)
+        char = CIGAR_ARR[num & 0x0f]
+        num = num>>4
+        cigar.push num + char
         cursor+=4
-        name = bambuf.slice(cursor, cursor+nameLen-1).toString("ascii")
-        cursor+=nameLen
-        refLen = bambuf.readInt32LE cursor
-        cursor+=4
-        refs[i] = name: name, len: refLen
+      cigar = cigar.join("")
 
-      onHeader header if onHeader
-      return bambuf.slice(cursor)
+      seqLenByte = Math.floor((seqLen+1)/2)
 
-    # reading bam alignment data
-    readAlignment = (buf, k)->
-      itr = 0
-      while buf.length
-        cursor = 0
-        blockSize = buf.readInt32LE cursor
+      seqBits = buf.slice(cursor, cursor+seqLenByte)
+      seq = []
+      for byte in seqBits
+        seq.push SEQ_ARR[byte >>4]
+        second = SEQ_ARR[byte & 0x0F]
+        seq.push second if second isnt "="
+      seq = seq.join("")
+      cursor+=seqLenByte
 
-        break if buf.length < blockSize
-        cursor+=4
-        count++
+      #phredQuals = buf.slice(cursor, cursor+seqLen).toString("hex")
+      qual = (String.fromCharCode(buf[cursor+i]+33) for i in [0...seqLen]).join("")
+      cursor+=seqLen
 
-        refId = buf.readInt32LE cursor
-        rname = if refId is -1 then "*" else refs[refId].name
-        cursor+=4
-
-        pos = buf.readInt32LE cursor
-        cursor+=4
-
-        readNameLen = buf.readUInt8 cursor
+      tags = {}
+      while true
+        break if cursor-4 >= blockSize
+        tag = buf.slice(cursor, cursor+2).toString("ascii")
+        cursor+=2
+        valtype = String.fromCharCode buf[cursor]
         cursor++
 
-        mapq = buf.readUInt8 cursor
-        cursor++
+        switch valtype
+          when "A"
+            tags[tag] = type: valtype, value: String.fromCharCode buf[cursor]
+            cursor++
+          when "c"
+            tags[tag] = type: "i", value: buf.readInt8 cursor
+            cursor++
+          when "C"
+            tags[tag] = type: "i", value: buf.readUInt8 cursor
+            cursor++
+          when "s"
+            tags[tag] = type: "i", value: buf.readInt16LE cursor
+            cursor+=2
+          when "S"
+            tags[tag] = type: "i", value: buf.readUInt16LE cursor
+            cursor+=2
+          when "i"
+            tags[tag] = type: "i", value: buf.readInt32LE cursor
+            cursor+=4
+          when "I"
+            tags[tag] = type: "i", value: buf.readUInt32LE cursor
+            cursor+=4
+          when "f"
+            tags[tag] = type: valtype, value: buf.readFloatLE cursor
+            cursor+=4
+          when "B"
+            subtype = String.fromCharCode buf[cursor]
+            cursor++
+            arrayLen = buf.readInt32LE cursor
+            cursor+=4
+            switch subtype
+              when "c"
+                tags[tag] = type: valtype, value: (buf.readInt8 cursor+i for i in [0...arrayLen])
+                cursor+=arrayLen
+              when "C"
+                tags[tag] = type: valtype, value: (buf.readUInt8 cursor+i for i in [0...arrayLen])
+                cursor+=arrayLen
+              when "s"
+                tags[tag] = type: valtype, value: (buf.readInt16LE cursor+i*2 for i in [0...arrayLen])
+                cursor+=arrayLen*2
+              when "S"
+                tags[tag] = type: valtype, value: (buf.readUInt16LE cursor+i*2 for i in [0...arrayLen])
+                cursor+=arrayLen*2
+              when "i"
+                tags[tag] = type: valtype, value: (buf.readInt32LE cursor+i*4 for i in [0...arrayLen])
+                cursor+=arrayLen*4
+              when "I"
+                tags[tag] = type: valtype, value: (buf.readUInt32LE cursor+i*4 for i in [0...arrayLen])
+                cursor+=arrayLen*4
+              when "f"
+                tags[tag] = type: valtype, value: (buf.readFloatLE cursor+i*4 for i in [0...arrayLen])
+                cursor+=arrayLen*4
+            value.unshift subtype
 
-        bin = buf.readUInt16LE cursor
-        cursor+=2
+          when "Z"
+            zLen = 0
+            zLen++ while buf[cursor+zLen] isnt 0x00
+            tags[tag] = type: valtype, value: buf.slice(cursor, cursor+zLen).toString("ascii")
+            cursor+=zLen+1
+          when "H"
+            hLen = 0
+            hLen++ while buf[cursor+hLen] isnt 0x00
+            tags[tag] = type: valtype, value: buf.slice(cursor, cursor+hLen).toString("hex")
+            cursor+=hLen+1
 
-        cigarLen = buf.readUInt16LE cursor
-        cursor+=2
+      buf = buf.slice cursor
 
-        flag = buf.readUInt16LE cursor
-        flags = {}
-        flags[flagname] = !!(flag & (0x01 << i)) for flagname,i in FLAGS
-        cursor+=2
+      # output
+      bams.push
+        qname   : readName
+        flag    : flag
+        rname   : rname
+        pos     : pos+1
+        mapq    : mapq
+        cigar   : cigar
+        rnext   : rnext
+        pnext   : nextPos+1
+        tlen    : tLen
+        seq     : seq
+        qual    : qual
+        tags    : tags
+        start   : pos
+        flags   : flags
+        tagstr  : ([name, tag.type, if Array.isArray tag.value then tag.value.join(",") else tag.value].join(":") for name,tag of tags).join("\t")
+    return bams
 
-        seqLen = buf.readInt32LE cursor
-        cursor+=4
+  @bamToSam = (bamline)->
+    [
+      bamline.qname
+      bamline.flag
+      bamline.rname
+      bamline.pos
+      bamline.mapq
+      bamline.cigar || "*"
+      if bamline.rnext is bamline.rname and bamline.rname isnt "*" then "=" else bamline.rnext
+      bamline.pnext
+      bamline.tlen
+      bamline.seq
+      bamline.qual
+      bamline.tagstr
+    ].join("\t")
 
-        nextRefId = buf.readInt32LE cursor
-        rnext = if nextRefId is -1 then "*" else refs[nextRefId].name
-        cursor+=4
-
-        nextPos = buf.readInt32LE cursor
-        cursor+=4
-
-        tLen = buf.readInt32LE cursor
-        cursor+=4
-
-        readName = buf.slice(cursor, cursor+readNameLen-1).toString("ascii")
-        cursor+=readNameLen
-
-        cigar = []
-        for i in [0...cigarLen]
-          num = buf.readUInt32LE(cursor, cursor+4)
-          char = CIGAR_ARR[num & 0x0f]
-          num = num>>4
-          cigar.push num + char
-          cursor+=4
-        cigar = cigar.join("")
-
-        seqLenByte = Math.floor((seqLen+1)/2)
-
-        seqBits = buf.slice(cursor, cursor+seqLenByte)
-        seq = []
-        for byte in seqBits
-          seq.push SEQ_ARR[byte >>4]
-          second = SEQ_ARR[byte & 0x0F]
-          seq.push second if second isnt "="
-        seq = seq.join("")
-        cursor+=seqLenByte
-
-        #phredQuals = buf.slice(cursor, cursor+seqLen).toString("hex")
-        qual = (String.fromCharCode(buf[cursor+i]+33) for i in [0...seqLen]).join("")
-        cursor+=seqLen
-
-        tags = {}
-        while true
-          break if cursor-4 >= blockSize
-          tag = buf.slice(cursor, cursor+2).toString("ascii")
-          cursor+=2
-          valtype = String.fromCharCode buf[cursor]
-          cursor++
-
-          switch valtype
-            when "A"
-              tags[tag] = type: valtype, value: String.fromCharCode buf[cursor]
-              cursor++
-            when "c"
-              tags[tag] = type: "i", value: buf.readInt8 cursor
-              cursor++
-            when "C"
-              tags[tag] = type: "i", value: buf.readUInt8 cursor
-              cursor++
-            when "s"
-              tags[tag] = type: "i", value: buf.readInt16LE cursor
-              cursor+=2
-            when "S"
-              tags[tag] = type: "i", value: buf.readUInt16LE cursor
-              cursor+=2
-            when "i"
-              tags[tag] = type: "i", value: buf.readInt32LE cursor
-              cursor+=4
-            when "I"
-              tags[tag] = type: "i", value: buf.readUInt32LE cursor
-              cursor+=4
-            when "f"
-              tags[tag] = type: valtype, value: buf.readFloatLE cursor
-              cursor+=4
-            when "B"
-              subtype = String.fromCharCode buf[cursor]
-              cursor++
-              arrayLen = buf.readInt32LE cursor
-              cursor+=4
-              switch subtype
-                when "c"
-                  tags[tag] = type: valtype, value: (buf.readInt8 cursor+i for i in [0...arrayLen])
-                  cursor+=arrayLen
-                when "C"
-                  tags[tag] = type: valtype, value: (buf.readUInt8 cursor+i for i in [0...arrayLen])
-                  cursor+=arrayLen
-                when "s"
-                  tags[tag] = type: valtype, value: (buf.readInt16LE cursor+i*2 for i in [0...arrayLen])
-                  cursor+=arrayLen*2
-                when "S"
-                  tags[tag] = type: valtype, value: (buf.readUInt16LE cursor+i*2 for i in [0...arrayLen])
-                  cursor+=arrayLen*2
-                when "i"
-                  tags[tag] = type: valtype, value: (buf.readInt32LE cursor+i*4 for i in [0...arrayLen])
-                  cursor+=arrayLen*4
-                when "I"
-                  tags[tag] = type: valtype, value: (buf.readUInt32LE cursor+i*4 for i in [0...arrayLen])
-                  cursor+=arrayLen*4
-                when "f"
-                  tags[tag] = type: valtype, value: (buf.readFloatLE cursor+i*4 for i in [0...arrayLen])
-                  cursor+=arrayLen*4
-              value.unshift subtype
-
-            when "Z"
-              zLen = 0
-              zLen++ while buf[cursor+zLen] isnt 0x00
-              tags[tag] = type: valtype, value: buf.slice(cursor, cursor+zLen).toString("ascii")
-              cursor+=zLen+1
-            when "H"
-              hLen = 0
-              hLen++ while buf[cursor+hLen] isnt 0x00
-              tags[tag] = type: valtype, value: buf.slice(cursor, cursor+hLen).toString("hex")
-              cursor+=hLen+1
-
-        buf = buf.slice cursor
-
-        # output
-        bamline =
-          qname   : readName
-          flag    : flag
-          rname   : rname
-          pos     : pos+1
-          mapq    : mapq
-          cigar   : cigar
-          rnext   : rnext
-          pnext   : nextPos+1
-          tlen    : tLen
-          seq     : seq
-          qual    : qual
-          tags    : tags
-          start   : pos
-          flags   : flags
-          tagstr  : ([name, tag.type, if Array.isArray tag.value then tag.value.join(",") else tag.value].join(":") for name,tag of tags).join("\t")
-
-        onBam bamline if onBam
-
-        if onSam
-          samline = [
-            bamline.qname
-            bamline.flag
-            bamline.rname
-            bamline.pos
-            bamline.mapq
-            bamline.cigar || "*"
-            if bamline.rnext is bamline.rname and bamline.rname isnt "*" then "=" else bamline.rnext
-            bamline.pnext
-            bamline.tlen
-            bamline.seq
-            bamline.qual
-            bamline.tagstr
-          ].join("\t")
-          onSam samline
 
 module.exports = BAMReader
