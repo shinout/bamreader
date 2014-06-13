@@ -282,7 +282,7 @@ class BAMReader
     return ret
 
   # reading bam alignment data
-  @readAlignmentsFromInflatedBuffer = (buf, refs)->
+  @readAlignmentsFromInflatedBuffer = (buf, refs, readFirst)->
     bams = []
     while buf.length
       cursor = 0
@@ -447,6 +447,7 @@ class BAMReader
         start   : pos
         flags   : flags
         tagstr  : ([name, tag.type, if Array.isArray tag.value then tag.value.join(",") else tag.value].join(":") for name,tag of tags).join("\t")
+      return bams[0] if readFirst
     return bams
 
   @bamToSam = (bamline)->
