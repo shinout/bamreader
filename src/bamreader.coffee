@@ -225,7 +225,7 @@ class BAMReader
       for i in [0...16]
         throw new Error("not BGZF (offset=#{offset}, i=#{i})") if _defBuf[i] isnt BGZF_HEADER[i]
       defBuf = Buffer.concat [defBuf, _defBuf]
-      delta = defBuf.readUInt16LE(16) + 1
+      delta = defBuf.readUInt16LE(16, true) + 1
       break if defBuf.length >= delta
       k++
 
@@ -236,7 +236,7 @@ class BAMReader
     defBufs = []
     loop
       return [defBufs,defBuf] if defBuf.length <= 26
-      cdataLen = defBuf.readUInt16LE(16)- 25
+      cdataLen = defBuf.readUInt16LE(16, true)- 25
       return [defBufs,defBuf] if defBuf.length < cdataLen + 26
       # unzip
       defBufs.push defBuf.slice(18, cdataLen + 18)
@@ -245,19 +245,19 @@ class BAMReader
   # reading bam header
   @readHeaderFromInflatedBuffer = (bambuf, ifReturnsBamBuf)->
     refs = {}
-    headerLen = bambuf.readInt32LE(4)
+    headerLen = bambuf.readInt32LE(4, true)
     throw new Error("header len") if bambuf.length < headerLen + 16
     headerStr = bambuf.slice(8,headerLen+8).toString("ascii")
     cursor = headerLen + 8
-    nRef = bambuf.readInt32LE cursor
+    nRef = bambuf.readInt32LE cursor, true
     cursor+=4
 
     for i in [0...nRef]
-      nameLen = bambuf.readInt32LE cursor
+      nameLen = bambuf.readInt32LE cursor, true
       cursor+=4
       name = bambuf.slice(cursor, cursor+nameLen-1).toString("ascii")
       cursor+=nameLen
-      refLen = bambuf.readInt32LE cursor
+      refLen = bambuf.readInt32LE cursor, true
       cursor+=4
       refs[i] = name: name, len: refLen
 
@@ -270,46 +270,46 @@ class BAMReader
     bams = []
     while buf.length
       cursor = 0
-      blockSize = buf.readInt32LE cursor
+      blockSize = buf.readInt32LE cursor, true
 
       break if buf.length < blockSize
       cursor+=4
 
-      refId = buf.readInt32LE cursor
+      refId = buf.readInt32LE cursor, true
       rname = if refId is -1 then "*" else refs[refId].name
       cursor+=4
 
-      pos = buf.readInt32LE cursor
+      pos = buf.readInt32LE cursor, true
       cursor+=4
 
-      readNameLen = buf.readUInt8 cursor
+      readNameLen = buf.readUInt8 cursor, true
       cursor++
 
-      mapq = buf.readUInt8 cursor
+      mapq = buf.readUInt8 cursor, true
       cursor++
 
-      bin = buf.readUInt16LE cursor
+      bin = buf.readUInt16LE cursor, true
       cursor+=2
 
-      cigarLen = buf.readUInt16LE cursor
+      cigarLen = buf.readUInt16LE cursor, true
       cursor+=2
 
-      flag = buf.readUInt16LE cursor
+      flag = buf.readUInt16LE cursor, true
       flags = {}
       flags[flagname] = !!(flag & (0x01 << i)) for flagname,i in FLAGS
       cursor+=2
 
-      seqLen = buf.readInt32LE cursor
+      seqLen = buf.readInt32LE cursor, true
       cursor+=4
 
-      nextRefId = buf.readInt32LE cursor
+      nextRefId = buf.readInt32LE cursor, true
       rnext = if nextRefId is -1 then "*" else refs[nextRefId].name
       cursor+=4
 
-      nextPos = buf.readInt32LE cursor
+      nextPos = buf.readInt32LE cursor, true
       cursor+=4
 
-      tLen = buf.readInt32LE cursor
+      tLen = buf.readInt32LE cursor, true
       cursor+=4
 
       readName = buf.slice(cursor, cursor+readNameLen-1).toString("ascii")
@@ -317,7 +317,7 @@ class BAMReader
 
       cigar = []
       for i in [0...cigarLen]
-        num = buf.readUInt32LE(cursor, cursor+4)
+        num = buf.readUInt32LE(cursor, true)
         char = CIGAR_ARR[num & 0x0f]
         num = num>>4
         cigar.push num + char
@@ -352,52 +352,52 @@ class BAMReader
             tags[tag] = type: valtype, value: String.fromCharCode buf[cursor]
             cursor++
           when "c"
-            tags[tag] = type: "i", value: buf.readInt8 cursor
+            tags[tag] = type: "i", value: buf.readInt8 cursor, true
             cursor++
           when "C"
-            tags[tag] = type: "i", value: buf.readUInt8 cursor
+            tags[tag] = type: "i", value: buf.readUInt8 cursor, true
             cursor++
           when "s"
-            tags[tag] = type: "i", value: buf.readInt16LE cursor
+            tags[tag] = type: "i", value: buf.readInt16LE cursor, true
             cursor+=2
           when "S"
-            tags[tag] = type: "i", value: buf.readUInt16LE cursor
+            tags[tag] = type: "i", value: buf.readUInt16LE cursor, true
             cursor+=2
           when "i"
-            tags[tag] = type: "i", value: buf.readInt32LE cursor
+            tags[tag] = type: "i", value: buf.readInt32LE cursor, true
             cursor+=4
           when "I"
-            tags[tag] = type: "i", value: buf.readUInt32LE cursor
+            tags[tag] = type: "i", value: buf.readUInt32LE cursor, true
             cursor+=4
           when "f"
-            tags[tag] = type: valtype, value: buf.readFloatLE cursor
+            tags[tag] = type: valtype, value: buf.readFloatLE cursor, true
             cursor+=4
           when "B"
             subtype = String.fromCharCode buf[cursor]
             cursor++
-            arrayLen = buf.readInt32LE cursor
+            arrayLen = buf.readInt32LE cursor, true
             cursor+=4
             switch subtype
               when "c"
-                tags[tag] = type: valtype, value: (buf.readInt8 cursor+i for i in [0...arrayLen])
+                tags[tag] = type: valtype, value: (buf.readInt8 cursor+i, true for i in [0...arrayLen])
                 cursor+=arrayLen
               when "C"
-                tags[tag] = type: valtype, value: (buf.readUInt8 cursor+i for i in [0...arrayLen])
+                tags[tag] = type: valtype, value: (buf.readUInt8 cursor+i, true for i in [0...arrayLen])
                 cursor+=arrayLen
               when "s"
-                tags[tag] = type: valtype, value: (buf.readInt16LE cursor+i*2 for i in [0...arrayLen])
+                tags[tag] = type: valtype, value: (buf.readInt16LE cursor+i*2, true for i in [0...arrayLen])
                 cursor+=arrayLen*2
               when "S"
-                tags[tag] = type: valtype, value: (buf.readUInt16LE cursor+i*2 for i in [0...arrayLen])
+                tags[tag] = type: valtype, value: (buf.readUInt16LE cursor+i*2, true for i in [0...arrayLen])
                 cursor+=arrayLen*2
               when "i"
-                tags[tag] = type: valtype, value: (buf.readInt32LE cursor+i*4 for i in [0...arrayLen])
+                tags[tag] = type: valtype, value: (buf.readInt32LE cursor+i*4, true for i in [0...arrayLen])
                 cursor+=arrayLen*4
               when "I"
-                tags[tag] = type: valtype, value: (buf.readUInt32LE cursor+i*4 for i in [0...arrayLen])
+                tags[tag] = type: valtype, value: (buf.readUInt32LE cursor+i*4, true for i in [0...arrayLen])
                 cursor+=arrayLen*4
               when "f"
-                tags[tag] = type: valtype, value: (buf.readFloatLE cursor+i*4 for i in [0...arrayLen])
+                tags[tag] = type: valtype, value: (buf.readFloatLE cursor+i*4, true for i in [0...arrayLen])
                 cursor+=arrayLen*4
             value.unshift subtype
 
