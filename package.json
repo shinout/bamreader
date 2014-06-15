@@ -1,6 +1,6 @@
 {
   "name": "bamreader",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "an object reading bams",
   "homepage": "http://github.com/shinout/bamreader",
   "author": "Shin Suzuki<shinout310@gmail.com>",
@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "linestream": ">= 0.3.2",
-    "termcolor": ">= 0.2.0"
+    "termcolor": ">= 0.2.0",
+    "zlib-raw-sync": ">= 0.0.1"
   },
   "devDependencies": {
     "coffee-script": ">= 1.7.1",

@@ -8,6 +8,7 @@ createReadStream = fs.createReadStream
 createInflateRaw = require("zlib").createInflateRaw
 childProcess = require("child_process")
 require("termcolor").define
+inflateRawSync = require("zlib-raw-sync").inflateRawSync
 
 SEQ_ARR = "=ACMGRSVTWYHKDBN".split("")
 CIGAR_ARR = "MIDNSHP=X".split("")
@@ -132,31 +133,18 @@ class BAMReader
       rstream = createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
 
     refs = {}
-    currentIdx = 0
-    readIdx = 0
-    lastIdx = 0
-    inflatedBuffers = {}
+    bambuf4h = new Buffer(0)
+    readingHeader = true
+    remainedBuffer = new Buffer(0)
 
     # read deflated buffers
-    remainedBuffer = new Buffer(0)
-    rstream.on "data", (newBuffer)->
+    _read = (newBuffer)->
       buf = Buffer.concat [remainedBuffer, newBuffer], remainedBuffer.length + newBuffer.length
       # split deflated buffer
       [defBufs, remainedBuffer] = BAMReader.splitDeflatedBuffer(buf)
 
       for defBuf in defBufs
-        do (k = currentIdx++) ->
-          BAMReader.inflateRaw defBuf, (e, infBuf)->
-            inflatedBuffers[k] = infBuf
-            readInflatedBuffers()
-
-    # reads inflated buffers
-    bambuf4h = new Buffer(0)
-    readingHeader = true
-    readInflatedBuffers = ->
-      while bambuf = inflatedBuffers[readIdx]
-        delete inflatedBuffers[readIdx]
-        readIdx++
+        bambuf = inflateRawSync defBuf
         # read header
         if readingHeader
           bambuf4h = Buffer.concat [bambuf4h, bambuf]
@@ -164,19 +152,20 @@ class BAMReader
             {refs, headerStr, bambuf} = BAMReader.readHeaderFromInflatedBuffer bambuf4h, true
             readingHeader = false
             onHeader headerStr if onHeader
-            return if bambuf.length is 0
+            continue if bambuf.length is 0
           catch e
             continue
-
         # read alignments
         bams = BAMReader.readAlignmentsFromInflatedBuffer bambuf, refs
         onBam bamline for bamline in bams if onBam
         onSam(BAMReader.bamToSam(bamline)) for bamline in bams if onSam
 
-      onEnd() if onEnd and currentIdx is lastIdx
+    rstream.on "data", _read
 
     rstream.on "end", ()->
-      lastIdx = currentIdx
+      # read remained buffer
+      _read(remainedBuffer)
+      onEnd() if onEnd
 
   # read header from a bamfile
   @readHeader = (bamfile, cb)->
