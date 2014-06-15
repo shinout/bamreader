@@ -5,7 +5,6 @@ BGZF_ESTIMATED_LEN = 65536
 BGZF_HEADER = new Buffer("1f 8b 08 04 00 00 00 00 00 ff 06 00 42 43 02 00".split(" ").join(""), "hex")
 fs = require("fs")
 createReadStream = fs.createReadStream
-createInflateRaw = require("zlib").createInflateRaw
 childProcess = require("child_process")
 require("termcolor").define
 inflateRawSync = require("zlib-raw-sync").inflateRawSync
@@ -168,58 +167,54 @@ class BAMReader
       onEnd() if onEnd
 
   # read header from a bamfile
-  @readHeader = (bamfile, cb)->
+  @readHeader = (bamfile)->
     infBuf = new Buffer(0)
     offset = 0
     fd = fs.openSync bamfile, "r"
 
-    getHeader = ->
+    loop
       [bufToInflate, next] = BAMReader.getDeflatedBuffer(fd, offset)
       offset = next
 
-      BAMReader.inflateRaw bufToInflate, (e, _infBuf)->
-        infBuf = Buffer.concat [infBuf, _infBuf]
-        try
-          headerInfo = BAMReader.readHeaderFromInflatedBuffer(infBuf)
-          headerInfo.offset = offset
-          headerInfo.fd = fd
-          cb(null, headerInfo)
-        catch e
-          return getHeader()
-    getHeader()
+      _infBuf = inflateRawSync bufToInflate
+      infBuf = Buffer.concat [infBuf, _infBuf]
 
-  @splitBody = (bamfile, num, headerInfo, cb)->
-    _splitBody = (e, headerInfo)->
-      size = (fs.statSync bamfile).size
-      offset = headerInfo.offset
-      fd = headerInfo.fd or fs.openSync(bamfile, "r")
-      interval = Math.floor((size-offset)/num)
-      positions = []
+      try
+        headerInfo = BAMReader.readHeaderFromInflatedBuffer(infBuf)
+        headerInfo.offset = offset
+        headerInfo.fd = fd
+        break
+      catch e
+    return headerInfo
 
-      buflen = Math.min(BGZF_ESTIMATED_LEN, interval)
+  @splitBody = (bamfile, num, headerInfo)->
+    headerInfo = headerInfo or BAMReader.readHeader(bamfile)
+    size = (fs.statSync bamfile).size
+    offset = headerInfo.offset
+    fd = headerInfo.fd or fs.openSync(bamfile, "r")
+    interval = Math.floor((size-offset)/num)
+    positions = []
 
-      for k in [0...num]
-        # finding accurate position of BGZF
-        start = interval * k + offset-1
-        buf = new Buffer(buflen)
-        fs.readSync fd, buf, 0, buflen, start
-        cursor = -1
-        match = false
-        until match or cursor + 16 > buf.length
-          cursor++
-          headerCandidate = buf.slice(cursor, cursor+16)
-          match = true
-          for b,i in BGZF_HEADER
-            if b isnt headerCandidate[i]
-              match = false
-              break
-        positions.push(start + cursor) if match
-      fs.closeSync(fd)
-      cb(null, positions: positions, header: headerInfo, size: size)
-    if headerInfo
-      _splitBody(null, headerInfo)
-    else
-      BAMReader.readHeader(bamfile, _splitBody)
+    buflen = Math.min(BGZF_ESTIMATED_LEN, interval)
+
+    for k in [0...num]
+      # finding accurate position of BGZF
+      start = interval * k + offset-1
+      buf = new Buffer(buflen)
+      fs.readSync fd, buf, 0, buflen, start
+      cursor = -1
+      match = false
+      until match or cursor + 16 > buf.length
+        cursor++
+        headerCandidate = buf.slice(cursor, cursor+16)
+        match = true
+        for b,i in BGZF_HEADER
+          if b isnt headerCandidate[i]
+            match = false
+            break
+      positions.push(start + cursor) if match
+    fs.closeSync(fd)
+    return positions: positions, size: size, header: headerInfo
 
   @getDeflatedBuffer = (fd, offset)->
     defBuf = new Buffer(0)
@@ -454,33 +449,5 @@ class BAMReader
       bamline.qual
       bamline.tagstr
     ].join("\t")
-
-  @inflateRaw = (defBuf, callback)->
-    engine = createInflateRaw chunkSize: 65535
-    nread = 0
-    error = false
-    infBufs = []
-
-    engine.on "error", (err)->
-      error = true
-      callback(err)
-
-    engine.on "end", ->
-      return if error
-      infBuf = Buffer.concat infBufs, nread
-      infBufs = []
-      engine.close()
-      callback(null, infBuf)
-
-    flow = ->
-      while null isnt (chunk = engine.read())
-        infBufs.push chunk
-        nread += chunk.length
-      engine.once "readable", flow
-
-    engine.end defBuf
-    flow()
-
-
 
 module.exports = BAMReader
