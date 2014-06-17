@@ -31,7 +31,7 @@ class BAMReader
     @bamfile.pause() if @bamfile.readable
 
     childProcess.exec "which samtools", (e, stdout,stderr)=>
-      @beginSamtools(@options.sam) if @options.samtools
+      return @beginSamtools() if @options.samtools
       if not @options.sam and (e or stderr or @options.native) then @begin() else @beginSamtools(@options.sam)
 
   @create: (bamfile, options={})->
