@@ -1,37 +1,28 @@
-###
-# BAMReader by Shin Suzuki(@shinout)
-####
 BGZF_ESTIMATED_LEN = 65536
 BGZF_HEADER = new Buffer("1f 8b 08 04 00 00 00 00 00 ff 06 00 42 43 02 00".split(" ").join(""), "hex")
-fs = require("fs")
-createReadStream = fs.createReadStream
-childProcess = require("child_process")
-require("termcolor").define
-inflateRawSync = require("zlib-raw-sync").inflateRawSync
-
 SEQ_ARR = "=ACMGRSVTWYHKDBN".split("")
 CIGAR_ARR = "MIDNSHP=X".split("")
-FLAGS = [
-  "multiple"
-  "allmatches"
-  "unmapped"
-  "next_unmapped"
-  "reversed"
-  "next_reversed"
-  "first"
-  "last"
-  "secondary"
-  "lowquality"
-  "duplicate"
-  "supplementary"
-]
+
+fs = require("fs")
+childProcess = require("child_process")
+inflateRawSync = require("zlib-raw-sync").inflateRawSync
 
 class BAMReader
   constructor: (@bamfile, @options={})->
     @bamfile.pause() if @bamfile.readable
+    try
+      @dic = require("bamdic").create(if @bamfile.readable then @options.bamfile else @bamfile)
+    catch e
+    try
+      tlenJSON = require(@options.tlenInfo)
+      @tlen_sd   = tlenJSON.purified.sd
+      @tlen_mean = tlenJSON.purified.mean
+    catch e
+
+    return @ if options.wait
 
     childProcess.exec "which samtools", (e, stdout,stderr)=>
-      @beginSamtools(@options.sam) if @options.samtools
+      return @beginSamtools() if @options.samtools
       if not @options.sam and (e or stderr or @options.native) then @begin() else @beginSamtools(@options.sam)
 
   @create: (bamfile, options={})->
@@ -43,8 +34,11 @@ class BAMReader
       when "bam" then @onBam = fn
       when "end" then @onEnd = fn
       when "header" then @onHeader = fn
+    return @
 
   beginSamtools: (isSam)->
+    reader = @
+    Bam = module.exports.Bam
     samtoolsCmd = @options.samtools or "samtools"
     onBam = @onBam
     onSam = @onSam
@@ -77,48 +71,14 @@ class BAMReader
           headerLines = null
 
       onSam samline if onSam
-      if onBam
-        sam = samline.split("\t")
-        # output
-        bamline =
-          qname   : sam[0]
-          flag    : Number sam[1]
-          rname   : sam[2]
-          pos     : Number sam[3]
-          mapq    : Number sam[4]
-          cigar   : sam[5]
-          rnext   : sam[6]
-          pnext   : Number(sam[7])+1
-          tlen    : Number sam[8]
-          seq     : sam[9]
-          qual    : sam[10]
-          tags    : {}
-          start   : Number(sam[3])-1
-          flags   : {}
-          tagstr  : sam.slice(11).join("\t")
-        bamline.flags[flagname] = !!(bamline.flag & (0x01 << i)) for flagname,i in FLAGS
-        for tag in sam.slice(11)
-          val = tag.split(":")
-          tag = val[0]
-          type = val[1]
-          switch type
-            when "i","f" then value = Number val[2]
-            when "B"
-              value = val[2].split(",")
-              subtype = value[0]
-              if subtype in ["c","C","s","S","i","I","f"]
-                value = (Number v for v in value)
-                value[0] = subtype
-            else
-              value = val[2]
-          bamline.tags[tag] = type: type, value: value
-        onBam bamline
+      onBam Bam.createFromSAM samline, reader if onBam
 
     if @bamfile.readable
       @bamfile.pipe samtools.stdin if samtools
       @bamfile.resume()
 
   begin: ()->
+    reader = @
     onBam = @onBam
     onSam = @onSam
     onEnd = @onEnd
@@ -129,7 +89,7 @@ class BAMReader
       rstream = @bamfile
       rstream.resume()
     else
-      rstream = createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
+      rstream = fs.createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
 
     refs = {}
     bambuf4h = new Buffer(0)
@@ -155,9 +115,9 @@ class BAMReader
           catch e
             continue
         # read alignments
-        bams = BAMReader.readAlignmentsFromInflatedBuffer bambuf, refs
-        onBam bamline for bamline in bams if onBam
-        onSam(BAMReader.bamToSam(bamline)) for bamline in bams if onSam
+        bams = BAMReader.readAlignmentsFromInflatedBuffer bambuf, refs, false, reader
+        onBam bam for bam in bams if onBam
+        onSam bam.sam for bam in bams if onSam
 
     rstream.on "data", _read
 
@@ -266,7 +226,8 @@ class BAMReader
     return ret
 
   # reading bam alignment data
-  @readAlignmentsFromInflatedBuffer = (buf, refs, readFirst)->
+  @readAlignmentsFromInflatedBuffer = (buf, refs, readFirst, reader)->
+    Bam = module.exports.Bam
     bams = []
     while buf.length
       cursor = 0
@@ -295,8 +256,6 @@ class BAMReader
       cursor+=2
 
       flag = buf.readUInt16LE cursor, true
-      flags = {}
-      flags[flagname] = !!(flag & (0x01 << i)) for flagname,i in FLAGS
       cursor+=2
 
       seqLen = buf.readInt32LE cursor, true
@@ -415,39 +374,22 @@ class BAMReader
       buf = buf.slice cursor
 
       # output
-      bams.push
-        qname   : readName
-        flag    : flag
-        rname   : rname
-        pos     : pos+1
-        mapq    : mapq
-        cigar   : cigar
-        rnext   : rnext
-        pnext   : nextPos+1
-        tlen    : tLen
-        seq     : seq
-        qual    : qual
-        tags    : tags
-        start   : pos
-        flags   : flags
-        tagstr  : ([name, tag.type, if Array.isArray tag.value then tag.value.join(",") else tag.value].join(":") for name,tag of tags).join("\t")
+      bams.push new Bam(
+        reader or null,
+        readName,
+        flag,
+        rname,
+        pos+1,
+        mapq,
+        cigar,
+        rnext,
+        nextPos+1,
+        tLen,
+        seq,
+        qual
+      )
+      bams.tags_ = tags
       return bams[0] if readFirst
     return bams
-
-  @bamToSam = (bamline)->
-    [
-      bamline.qname
-      bamline.flag
-      bamline.rname
-      bamline.pos
-      bamline.mapq
-      bamline.cigar || "*"
-      if bamline.rnext is bamline.rname and bamline.rname isnt "*" then "=" else bamline.rnext
-      bamline.pnext
-      bamline.tlen
-      bamline.seq
-      bamline.qual
-      bamline.tagstr
-    ].join("\t")
 
 module.exports = BAMReader
