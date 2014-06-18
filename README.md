@@ -14,9 +14,10 @@ usage
 ```js
 var BAMReader = require("bamreader");
 var reader = BAMReader.create("/path/to/bamfile.bam");
-reader.on("bam", function(bamdata) {
-  // bamdata: object. see "bamdata" section
-  console.log(bamdata.seq, bamdata.qual);
+reader.on("bam", function(bam) {
+  // bam: object. see "bam object" section
+  console.log(bam.seq, bam.qual);
+  console.log(bam.pair); // pair bam object of the bam. To do this, bamdic indexing is needed.
 });
 
 reader.on("sam", function(samline) {
@@ -32,25 +33,69 @@ options for BAMReader.create
 ----------------------------
 - native : read bam without samtools (slower than using samtools)
 
-bamdata
+bam object
 ------------------
-- qname   : name of the read
-- flag    : bitwise flag
-- rname   : reference sequence rname
-- pos     : 1-based leftmost mapping position
-- mapq    : mapping quality
-- cigar   : CIGAR string
-- rnext   : reference sequence name of the primary alignment of the next read
-- pnext   : position of the primary alignment of the next read
-- tlen    : template length
-- seq     : segment jsequence
-- qual    : ASCII of base quality plus 33
-- start   : 0-based leftmost mapping position
-- flags   : information of flags
-- tagstr  : optional fields as string
-- tags    : optional fields as structured data described in "bamdata.tags" section
+- pair                : information of the mate pair. see "bam.pair"
+- discordant          : discordant or not. see "bam.discordant"
+- qname               : name of the read
+- flag                : bitwise flag
+- rname               : reference sequence rname
+- pos                 : 1-based leftmost mapping position
+- mapq                : mapping quality
+- cigar               : CIGAR string
+- rnext               : reference sequence name of the primary alignment of the next read, if same as rname, then "="
+- next_rname          : the actual reference name of the next read.
+- pnext               : position of the primary alignment of the next read
+- tlen                : template length
+- seq                 : segment jsequence
+- qual                : ASCII of base quality plus 33
+- start               : 0-based leftmost mapping position
+- flags               : information of flags
+- tagstr              : optional fields as string
+- tags                : optional fields as structured data described in "bamdata.tags" section
+- multiple            : information from flag: template have multiple segment or not. 
+- unmapped            : information from flag: unmapped or not. 
+- allmatches          : information from flag: each segment properly aligned or not
+- next_unmapped       : information from flag: next segment is unmapped or not. 
+- reversed            : information from flag: reversely mapped or not.
+- next_reversed       : information from flag: next segment is reversely mapped or not.
+- first               : information from flag: first segment or not.
+- last                : information from flag: last segment or not.
+- secondary           : information from flag: secondary alignment or not.
+- lowquality          : information from flag: not passing quality control or not.
+- duplicate           : information from flag: PCR or optic duplicate or not.
+- supplementary       : information from flag: supplementary alignment or not.
+- clipped             : clipped or not.
+- soft_clipped        : soft-clipped or not.
+- hard_clipped        : hard-clipped or not.
+- left_break          : the left position of the breakpoint if clipped.
+- right_break         : the right position of the breakpoint if clipped.
+- match_len           : length of the matched portion of the read.
+- fully_matched       : if the whole base of the read is matched or not
+- indel               : the mapping result contains insertion/deletion or not.
+- different_reference : if both mapped and rname is not rnext or not
+- same_strand         : if both mapped and mapped to the same strand or not
+- has_n               : the read contains "N" or not
+- sam                 : SAM formatted string of the bam
 
-bamdata.tags
+bam.pair
+-------------------
+bamreader can fetch one mate pair of the read using bamdic's index.
+[bamdic](https://github.com/shinout/bamdic) is npm tool to create name-based index of bams.
+
+```bash
+$ npm install -g bamdic   # installation
+$ bamdic -c <bamfile>     # creates an index of the bamfile.
+```
+then you can access bam.pair
+
+bam.pair is also a bam object.
+
+bam.discordant
+-------------------
+(...)
+ 
+bam.tags
 ------------------
 - (key): tag name (two string character)
 - (value): type: data type, value: data
