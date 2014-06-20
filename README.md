@@ -72,6 +72,8 @@ bam object
 - right_break         : the right position of the breakpoint if clipped.
 - match_len           : length of the matched portion of the read.
 - fully_matched       : if the whole base of the read is matched or not
+- mismatch            : the number of mismatch bases
+- unique              : if the read is mapped uniquely or not
 - indel               : the mapping result contains insertion/deletion or not.
 - different_reference : if both mapped and rname is not rnext or not
 - same_strand         : if both mapped and mapped to the same strand or not

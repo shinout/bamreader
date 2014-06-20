@@ -23,6 +23,8 @@ console.assert bam.next_reversed is true
 console.assert bam.last is true
 console.assert bam.secondary is false
 console.assert bam.lowquality is false
+console.assert bam.unique is false
+console.assert bam.mismatch is 0
 console.assert bam.duplicate is false
 console.assert bam.supplementary is false
 console.assert bam.tagstr is bam.tagstr_

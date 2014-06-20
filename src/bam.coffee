@@ -129,6 +129,15 @@ class Bam
     has_n: ->
       !!@seq.match("N")
 
+    # only works if the mapper is BWA
+    unique: ->
+      not @unmapped and @mapq isnt 0
+
+    # only works if the mapper is BWA
+    mismatch: ->
+      return null if not @tags.NM
+      return @tags.NM.value
+
     discordant: ->
       return null if not @reader or@tlen is 0
       m = @reader.tlen_mean
