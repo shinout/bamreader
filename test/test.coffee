@@ -77,8 +77,10 @@ reader = BAMReader.create(__dirname + "/d.bam").on "bam", (bam)->
 n2 = 0
 m2 = 0
 reader = BAMReader.create(__dirname + "/d.bam", native: true).on "bam", (bam)->
+  #console.log bam
   if bam.pair
     m2++
   n2++
 .on "end", ->
+  console.log n2,m2
   console.assert n2 is m2

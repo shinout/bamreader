@@ -92,38 +92,50 @@ class BAMReader
       rstream = fs.createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
 
     refs = {}
-    bambuf4h = new Buffer(0)
     readingHeader = true
-    remainedBuffer = new Buffer(0)
+    remainedDefBuf = new Buffer(0)
+    remainedInfBuf = new Buffer(0)
 
     # read deflated buffers
-    _read = (newBuffer)->
-      buf = Buffer.concat [remainedBuffer, newBuffer], remainedBuffer.length + newBuffer.length
+    _read = (defBuf)->
+      defBuf = Buffer.concat [remainedDefBuf, defBuf], remainedDefBuf.length + defBuf.length
       # split deflated buffer
-      [defBufs, remainedBuffer] = BAMReader.splitDeflatedBuffer(buf)
+      [bufsToInflate, remainedDefBuf] = BAMReader.splitDeflatedBuffer(defBuf)
 
-      for defBuf in defBufs
-        bambuf = inflateRawSync defBuf
+      for bufToInflate in bufsToInflate
+
+        infBuf = if remainedInfBuf.length then Buffer.concat [remainedInfBuf, inflateRawSync bufToInflate] else inflateRawSync bufToInflate
         # read header
         if readingHeader
-          bambuf4h = Buffer.concat [bambuf4h, bambuf]
           try
-            {refs, headerStr, bambuf} = BAMReader.readHeaderFromInflatedBuffer bambuf4h, true
+            headerInfo = BAMReader.readHeaderFromInflatedBuffer infBuf, true
+            {refs, headerStr} = headerInfo
+            remainedInfBuf = headerInfo.infBuf
             readingHeader = false
             onHeader headerStr if onHeader
-            continue if bambuf.length is 0
+            continue
           catch e
+            remainedInfBuf = infBuf
             continue
         # read alignments
-        bams = BAMReader.readAlignmentsFromInflatedBuffer bambuf, refs, false, reader
-        onBam bam for bam in bams if onBam
-        onSam bam.sam for bam in bams if onSam
+        loop
+          if infBuf.length is 0
+            remainedInfBuf = infBuf
+            break
+          [bam, infBuf, offset] = BAMReader.readAlignmentFromInflatedBuffer infBuf, refs, reader
+          if bam is null
+            remainedInfBuf = infBuf
+            break
+          else
+            onBam bam if onBam
+            onSam bam.sam if onSam
+
 
     rstream.on "data", _read
 
-    rstream.on "end", ()->
+    rstream.on "end", ->
       # read remained buffer
-      _read(remainedBuffer)
+      _read(remainedDefBuf)
       onEnd() if onEnd
 
   # read header from a bamfile
@@ -203,72 +215,72 @@ class BAMReader
       defBuf = defBuf.slice(26+cdataLen)
 
   # reading bam header
-  @readHeaderFromInflatedBuffer = (bambuf, ifReturnsBamBuf)->
+  @readHeaderFromInflatedBuffer = (infBuf, ifReturnsinfBuf)->
     refs = {}
-    headerLen = bambuf.readInt32LE(4, true)
-    throw new Error("header len") if bambuf.length < headerLen + 16
-    headerStr = bambuf.slice(8,headerLen+8).toString("ascii")
+    headerLen = infBuf.readInt32LE(4)
+    throw new Error("header len") if infBuf.length < headerLen + 16
+    headerStr = infBuf.slice(8,headerLen+8).toString("ascii")
     cursor = headerLen + 8
-    nRef = bambuf.readInt32LE cursor, true
+    nRef = infBuf.readInt32LE cursor
     cursor+=4
 
+    blen = infBuf.length
+
     for i in [0...nRef]
-      nameLen = bambuf.readInt32LE cursor, true
+      nameLen = infBuf.readInt32LE cursor
       cursor+=4
-      name = bambuf.slice(cursor, cursor+nameLen-1).toString("ascii")
+      name = infBuf.slice(cursor, cursor+nameLen-1).toString("ascii")
       cursor+=nameLen
-      refLen = bambuf.readInt32LE cursor, true
+      refLen = infBuf.readInt32LE cursor
       cursor+=4
       refs[i] = name: name, len: refLen
 
     ret = refs: refs, headerStr: headerStr
-    ret.bambuf = bambuf.slice(cursor) if ifReturnsBamBuf
+    ret.infBuf = infBuf.slice(cursor) if ifReturnsinfBuf
     return ret
 
   # reading bam alignment data
-  @readAlignmentsFromInflatedBuffer = (buf, refs, readFirst, reader)->
-    Bam = module.exports.Bam
-    bams = []
-    while buf.length
+  @readAlignmentFromInflatedBuffer = (buf, refs, reader)->
+    try
       cursor = 0
-      blockSize = buf.readInt32LE cursor, true
+      blockSize = buf.readInt32LE cursor
 
-      break if buf.length < blockSize
+      return [null, buf, 0] if buf.length < blockSize
       cursor+=4
 
-      refId = buf.readInt32LE cursor, true
+      refId = buf.readInt32LE cursor
       rname = if refId is -1 then "*" else refs[refId].name
       cursor+=4
 
-      pos = buf.readInt32LE cursor, true
+      pos = buf.readInt32LE cursor
       cursor+=4
 
-      readNameLen = buf.readUInt8 cursor, true
+      readNameLen = buf.readUInt8 cursor
       cursor++
 
-      mapq = buf.readUInt8 cursor, true
+      mapq = buf.readUInt8 cursor
       cursor++
 
-      bin = buf.readUInt16LE cursor, true
+      bin = buf.readUInt16LE cursor
       cursor+=2
 
-      cigarLen = buf.readUInt16LE cursor, true
+      cigarLen = buf.readUInt16LE cursor
       cursor+=2
 
-      flag = buf.readUInt16LE cursor, true
+      flag = buf.readUInt16LE cursor
       cursor+=2
 
-      seqLen = buf.readInt32LE cursor, true
+      seqLen = buf.readInt32LE cursor
       cursor+=4
 
-      nextRefId = buf.readInt32LE cursor, true
+      nextRefId = buf.readInt32LE cursor
       rnext = if nextRefId is -1 then "*" else refs[nextRefId].name
       cursor+=4
 
-      nextPos = buf.readInt32LE cursor, true
+      nextPos = buf.readInt32LE cursor
       cursor+=4
 
-      tLen = buf.readInt32LE cursor, true
+      tLen = buf.readInt32LE cursor
       cursor+=4
 
       readName = buf.slice(cursor, cursor+readNameLen-1).toString("ascii")
@@ -276,7 +288,7 @@ class BAMReader
 
       cigar = []
       for i in [0...cigarLen]
-        num = buf.readUInt32LE(cursor, true)
+        num = buf.readUInt32LE(cursor)
         char = CIGAR_ARR[num & 0x0f]
         num = num>>4
         cigar.push num + char
@@ -311,30 +323,30 @@ class BAMReader
             tags[tag] = type: valtype, value: String.fromCharCode buf[cursor]
             cursor++
           when "c"
-            tags[tag] = type: "i", value: buf.readInt8 cursor, true
+            tags[tag] = type: "i", value: buf.readInt8 cursor
             cursor++
           when "C"
-            tags[tag] = type: "i", value: buf.readUInt8 cursor, true
+            tags[tag] = type: "i", value: buf.readUInt8 cursor
             cursor++
           when "s"
-            tags[tag] = type: "i", value: buf.readInt16LE cursor, true
+            tags[tag] = type: "i", value: buf.readInt16LE cursor
             cursor+=2
           when "S"
-            tags[tag] = type: "i", value: buf.readUInt16LE cursor, true
+            tags[tag] = type: "i", value: buf.readUInt16LE cursor
             cursor+=2
           when "i"
-            tags[tag] = type: "i", value: buf.readInt32LE cursor, true
+            tags[tag] = type: "i", value: buf.readInt32LE cursor
             cursor+=4
           when "I"
-            tags[tag] = type: "i", value: buf.readUInt32LE cursor, true
+            tags[tag] = type: "i", value: buf.readUInt32LE cursor
             cursor+=4
           when "f"
-            tags[tag] = type: valtype, value: buf.readFloatLE cursor, true
+            tags[tag] = type: valtype, value: buf.readFloatLE cursor
             cursor+=4
           when "B"
             subtype = String.fromCharCode buf[cursor]
             cursor++
-            arrayLen = buf.readInt32LE cursor, true
+            arrayLen = buf.readInt32LE cursor
             cursor+=4
             switch subtype
               when "c"
@@ -371,10 +383,9 @@ class BAMReader
             tags[tag] = type: valtype, value: buf.slice(cursor, cursor+hLen).toString("hex")
             cursor+=hLen+1
 
-      buf = buf.slice cursor
-
       # output
-      bams.push new Bam(
+      Bam = module.exports.Bam
+      bam = new Bam(
         reader or null,
         readName,
         flag,
@@ -388,8 +399,9 @@ class BAMReader
         seq,
         qual
       )
-      bams.tags_ = tags
-      return bams[0] if readFirst
-    return bams
+      bam.tags_ = tags
+      return [bam, buf.slice(cursor), cursor]
+    catch e
+      return [null, buf, 0]
 
 module.exports = BAMReader
