@@ -22,8 +22,8 @@ class BAMReader
     return @ if options.wait
 
     childProcess.exec "which samtools", (e, stdout,stderr)=>
-      return @beginSamtools() if @options.samtools
-      if not @options.sam and (e or stderr or @options.native) then @begin() else @beginSamtools(@options.sam)
+      return @runSamtools() if @options.samtools
+      if not @options.sam and (e or stderr or @options.native) then @run() else @runSamtools(@options.sam)
 
   @create: (bamfile, options={})->
     return new BAMReader(bamfile, options)
@@ -36,7 +36,7 @@ class BAMReader
       when "header" then @onHeader = fn
     return @
 
-  beginSamtools: (isSam)->
+  runSamtools: (isSam)->
     reader = @
     Bam = module.exports.Bam
     samtoolsCmd = @options.samtools or "samtools"
@@ -77,7 +77,7 @@ class BAMReader
       @bamfile.pipe samtools.stdin if samtools
       @bamfile.resume()
 
-  begin: ()->
+  run: ()->
     reader = @
     onBam = @onBam
     onSam = @onSam
