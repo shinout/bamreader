@@ -1,6 +1,6 @@
 {
   "name": "bamreader",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "object to read bams",
   "homepage": "http://github.com/shinout/bamreader",
   "author": "Shin Suzuki<shinout310@gmail.com>",

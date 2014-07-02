@@ -9,7 +9,6 @@ inflateRawSync = require("zlib-raw-sync").inflateRawSync
 
 class BAMReader
   constructor: (@bamfile, @options={})->
-    @bamfile.pause() if @bamfile.readable
     return @ if options.wait
 
     childProcess.exec "which samtools", (e, stdout,stderr)=>
@@ -66,7 +65,6 @@ class BAMReader
 
     if @bamfile.readable
       @bamfile.pipe samtools.stdin if samtools
-      @bamfile.resume()
 
   run: ()->
     try
@@ -87,7 +85,6 @@ class BAMReader
 
     if @bamfile.readable
       rstream = @bamfile
-      rstream.resume()
     else
       readstreamOption = highWaterMark: 1024 * 1024 - 1
       readstreamOption.start = @start if typeof @start is "number"
@@ -148,7 +145,9 @@ class BAMReader
           infBufOffset = 0
 
 
-    rstream.on "data", _read
+    rstream.on "readable", ->
+      while chunk = rstream.read()
+        _read(chunk)
 
     rstream.on "end", ->
       # read remained buffer
