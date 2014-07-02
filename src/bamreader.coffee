@@ -89,10 +89,13 @@ class BAMReader
       rstream = @bamfile
       rstream.resume()
     else
-      rstream = fs.createReadStream(@bamfile, highWaterMark: 1024 * 1024 - 1)
+      readstreamOption = highWaterMark: 1024 * 1024 - 1
+      readstreamOption.start = @start if typeof @start is "number"
+      readstreamOption.end   = @end   if typeof @end   is "number"
+      rstream = fs.createReadStream @bamfile, readstreamOption
 
-    refs = {}
-    readingHeader = true
+    refs = @refs or {}
+    readingHeader = if @refs then false else true #skip reading header when refs is given (mainly for bamdic)
     remainedDefBuf = new Buffer(0)
     remainedInfBuf = new Buffer(0)
     defBufOffset = 0
