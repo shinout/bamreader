@@ -95,6 +95,9 @@ class BAMReader
     readingHeader = true
     remainedDefBuf = new Buffer(0)
     remainedInfBuf = new Buffer(0)
+    defBufOffset = 0
+    infBufOffset = 0
+    deltaDefBuf  = 0
 
     # read deflated buffers
     _read = (defBuf)->
@@ -103,18 +106,19 @@ class BAMReader
       [bufsToInflate, remainedDefBuf] = BAMReader.splitDeflatedBuffer(defBuf)
 
       for bufToInflate in bufsToInflate
-
-        infBuf = if remainedInfBuf.length then Buffer.concat [remainedInfBuf, inflateRawSync bufToInflate] else inflateRawSync bufToInflate
+        infBufChunk = inflateRawSync bufToInflate
+        infBuf = if remainedInfBuf.length then Buffer.concat [remainedInfBuf, infBufChunk] else infBufChunk
         # read header
         if readingHeader
           try
             headerInfo = BAMReader.readHeaderFromInflatedBuffer infBuf, true
-            {refs, headerStr} = headerInfo
-            remainedInfBuf = headerInfo.infBuf
+            {refs, headerStr, infBuf} = headerInfo
             readingHeader = false
             onHeader headerStr if onHeader
-            continue
+            defBufOffset = deltaDefBuf
+            deltaDefBuf = 0
           catch e
+            deltaDefBuf += bufToInflate.length + 26
             remainedInfBuf = infBuf
             continue
         # read alignments
@@ -122,13 +126,23 @@ class BAMReader
           if infBuf.length is 0
             remainedInfBuf = infBuf
             break
-          [bam, infBuf, offset] = BAMReader.readAlignmentFromInflatedBuffer infBuf, refs, reader
+          [bam, infBuf] = BAMReader.readAlignmentFromInflatedBuffer infBuf, refs, reader
           if bam is null
             remainedInfBuf = infBuf
             break
           else
-            onBam bam if onBam
+            onBam bam, defBufOffset, infBufOffset if onBam
+            infBufOffset = infBufChunk.length - infBuf.length
             onSam bam.sam if onSam
+            if deltaDefBuf.length
+              defBufOffset += deltaDefBuf
+              deltaDefBuf = 0
+
+        deltaDefBuf += bufToInflate.length + 26
+        if remainedInfBuf.length is 0
+          defBufOffset += deltaDefBuf
+          deltaDefBuf = 0
+          infBufOffset = 0
 
 
     rstream.on "data", _read
@@ -188,14 +202,15 @@ class BAMReader
     fs.closeSync(fd)
     return positions: positions, size: size, header: headerInfo
 
-  @getDeflatedBuffer = (fd, offset)->
+  @getDeflatedBuffer = (fd, offset, nocheck)->
     defBuf = new Buffer(0)
     k = 0
     loop
       _defBuf = new Buffer(BGZF_ESTIMATED_LEN)
       fs.readSync fd, _defBuf, 0, BGZF_ESTIMATED_LEN, offset + k * BGZF_ESTIMATED_LEN
-      for i in [0...16]
-        throw new Error("not BGZF (offset=#{offset}, i=#{i})") if _defBuf[i] isnt BGZF_HEADER[i]
+      if not nocheck
+        for i in [0...16]
+          throw new Error("not BGZF (offset=#{offset}, i=#{i})") if _defBuf[i] isnt BGZF_HEADER[i]
       defBuf = Buffer.concat [defBuf, _defBuf]
       delta = defBuf.readUInt16LE(16, true) + 1
       break if defBuf.length >= delta

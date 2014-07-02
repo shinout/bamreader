@@ -67,7 +67,8 @@ console.assert bam.discordant is null
 
 n = 0
 m = 0
-reader = BAMReader.create(__dirname + "/d.bam").on "bam", (bam)->
+reader = BAMReader.create(__dirname + "/d.bam").on "bam", (bam, dOffset, iOffset)->
+  console.log dOffset, iOffset
   if bam.pair
     m++
   n++
