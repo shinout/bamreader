@@ -10,15 +10,6 @@ inflateRawSync = require("zlib-raw-sync").inflateRawSync
 class BAMReader
   constructor: (@bamfile, @options={})->
     @bamfile.pause() if @bamfile.readable
-    try
-      @dic = require("bamdic").create(if @bamfile.readable then @options.bamfile else @bamfile)
-    catch e
-    try
-      tlenJSON = require(@options.tlenInfo)
-      @tlen_sd   = tlenJSON.purified.sd
-      @tlen_mean = tlenJSON.purified.mean
-    catch e
-
     return @ if options.wait
 
     childProcess.exec "which samtools", (e, stdout,stderr)=>
@@ -78,6 +69,15 @@ class BAMReader
       @bamfile.resume()
 
   run: ()->
+    try
+      @dic = require("bamdic").create(if @bamfile.readable then @options.bamfile else @bamfile)
+    catch e
+    try
+      tlenJSON = require(@options.tlenInfo)
+      @tlen_sd   = tlenJSON.purified.sd
+      @tlen_mean = tlenJSON.purified.mean
+    catch e
+
     reader = @
     onBam = @onBam
     onSam = @onSam
