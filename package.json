@@ -19,14 +19,13 @@
     "node": ">= 0.8.0"
   },
   "dependencies": {
-    "linestream": ">= 0.3.2",
-    "bamdic": ">= 0.0.5",
-    "zlib-raw-sync": ">= 0.0.1"
+    "bgzf": ">= 0.0.0"
   },
   "devDependencies": {
     "coffee-script": ">= 1.7.1",
     "grunt": "^0.4.4",
-    "grunt-contrib-coffee": "^0.10.1"
+    "grunt-contrib-coffee": "^0.10.1",
+    "grunt-contrib-concat": "^0.4.0"
   },
   "repository": {
     "type": "git",
