@@ -2,7 +2,6 @@ BAMReader = require(__dirname + "/../lib/bamreader.js")
 n = 0
 
 BAMReader.create(__dirname + "/large.bam").on "bam", (bam, dOffset, iOffset)->
-  console.log dOffset, iOffset
   n++
   return if n isnt 1
   console.assert bam.qname is 'HS2000-903_160:5:1212:15649:87294'
