@@ -136,7 +136,6 @@ class BAMReader
       until match or cursor + 16 > buf.length
         cursor++
         continue unless isValidBGZF buf.slice(cursor, cursor+16)
-        console.log cursor + 16, buf.length, isValidBGZF buf.slice(cursor, cursor+16)
         d_offset = start + cursor
         # checks if the BGZF block contains the start of alignment buffer
         try

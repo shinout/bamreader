@@ -1,0 +1,9 @@
+#!/bin/bash
+dir=$(dirname $0)
+if expr "$1" : '[0-9]*' > /dev/null ; then
+  mem=${1}
+  shift
+else
+  mem=4000
+fi
+node --max_old_space_size=2400 ${dir}/_bamreader "$@"

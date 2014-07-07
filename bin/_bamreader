@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+
+(function() {
+  var BAMReader, fs, lib, main, path, showUsage;
+
+  path = require('path');
+
+  fs = require('fs');
+
+  lib = path.join(path.dirname(fs.realpathSync(__filename)), '../lib');
+
+  BAMReader = require(lib + '/bamreader.js');
+
+  main = function() {
+    var ap, bamfile, debug, e, num, reader;
+    try {
+      ap = require("argparser").nums("p").nonvals("debug", "c", "help").defaults({
+        p: 2
+      }).parse();
+      if (ap.opt("help")) {
+        return showUsage(true);
+      }
+      if (!ap.arg(0)) {
+        throw {
+          message: "bam file is required."
+        };
+      }
+      bamfile = require("path").resolve(ap.arg(0));
+      if (!fs.existsSync(bamfile)) {
+        throw {
+          message: "'" + bamfile + "': no such file."
+        };
+      }
+      debug = ap.opt("debug");
+      if (ap.opt("c")) {
+        num = ap.opt("p");
+        reader = BAMReader.create(bamfile);
+        return reader.createDic({
+          num: num,
+          debug: debug
+        });
+      }
+    } catch (_error) {
+      e = _error;
+      console.error(e.message);
+      return showUsage();
+    }
+  };
+
+  showUsage = function(out) {
+    return console[out ? "log" : "error"]("[USAGE]\n\n [create dic]\n\tbamreader [memory-size(MB)] -c <bam file> [-p #process] [--debug]\n\tdefault of #process : 2\n\t\t<examples>\n\t\tbamreader -c foo.bam -p 14\n\t\tbamreader 4000 -c bar.bam -p 8 --debug\n\n [show usage]\n\tbamreader --help");
+  };
+
+  main();
+
+}).call(this);
