@@ -127,8 +127,8 @@ class BAM
     # OPTIONAL PROPERTIES
     ######################
     pair: (bamObj)->
-      return null if not @reader or not @reader.dic or not @multiple
-      bams = @reader.dic.fetch(@qname)
+      return null if not @reader or not @multiple
+      bams = @reader.find(@qname)
       for bam in bams
         continue if @secondary or @supplementary or @flag is bam.flag
         if @next_unmapped
