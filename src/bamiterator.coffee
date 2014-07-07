@@ -44,7 +44,7 @@ class BAMIterator
   resume: ->
     if @paused
       @paused = false
-      if @on_end
+      if @ended
         process.nextTick @on_end.bind @, @env
       else
         process.nextTick @_read.bind @

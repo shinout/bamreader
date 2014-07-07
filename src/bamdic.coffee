@@ -24,7 +24,8 @@ BAMReader.prototype.createDic = (op = {}, callback)->
     w_count        : 0
     time           : new Date/1000|0
     debug          : op.debug
-    target         : {}
+    pool           : {}
+    pool_count     : 0
 
   # spawn children
   @fork
@@ -42,8 +43,10 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       data.writeUInt32BE(parseInt(binary.slice(-32), 2), 4, true) # lower
       upper = if binary.length > 32 then parseInt(binary.slice(0, -32), 2) else 0
       data.writeUInt32BE((upper << 16) + bam.i_offset, 8, true)
-      $.target[key] = [] unless $.target[key]?
-      $.target[key].push data
+      unless $.pool[key]?
+        $.pool[key] = []
+        $.pool_count++
+      $.pool[key].push data
       $.r_count++
 
     # write to tmpfile
@@ -51,16 +54,23 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       memory = process.memoryUsage()
       console.log [$.n, "R", $.r_count, (new Date/1000|0) - $.time, memory.rss].join("\t") if $.debug
       return false if not ended and memory.rss <= $.MAX_MEMORY_SIZE
+      if $.pool_count is 0 and not ended
+        setTimeout =>
+          @resume()
+        ,1000
+        return true
+
       WCHUNK_SIZE = $.WFILE_HWM - 10000
       w_data = ""
       tmpfile = "#{$.outfile}.#{$.n}.#{(++$.tmpfile_inc)}"
       wstream = require("fs").createWriteStream(tmpfile, highWaterMark: $.WFILE_HWM)
       _write = ->
         console.log [$.n, "W", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
-        for key,arr of $.target
+        for key,arr of $.pool
           w_data += arr.map((data)-> data.toString("hex") + "\n").join("")
           $.w_count += arr.length
-          delete $.target[key]
+          $.pool_count--
+          delete $.pool[key]
           if w_data.length > WCHUNK_SIZE
             wstream.write w_data, "utf-8", _write
             w_data = ""
