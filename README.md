@@ -6,7 +6,7 @@ Uses samtools If exists, otherwise uses a native parser.
 installation
 ----------------
 ```bash
-$ npm install bamreader
+$ npm install -g bamreader
 ```
 
 usage
@@ -17,7 +17,7 @@ var reader = BAMReader.create("/path/to/bamfile.bam");
 reader.on("bam", function(bam) {
   // bam: object. see "bam object" section
   console.log(bam.seq, bam.qual);
-  console.log(bam.pair); // pair bam object of the bam. To do this, bamdic indexing is needed.
+  console.log(bam.pair); // pair bam object of the bam. To do this, indexing is needed.
 });
 
 reader.on("end", function() {
@@ -74,10 +74,10 @@ bam object
 
 bam.pair
 -------------------
-bamreader can fetch one mate pair of the read using bamdic's index.
+bamreader can fetch one mate pair of the read using index.
 
 ```bash
-$ bamdic -c <bamfile>     # creates an index of the bamfile.
+$ bamreader -c <bamfile>     # creates an index of the bamfile.
 ```
 then you can access bam.pair
 

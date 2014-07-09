@@ -3,37 +3,11 @@ inflateBGZF = require("bgzf").inflate
 isValidBGZF = require("bgzf").hasValidHeader
 INFBUF_CACHE_SIZE = 1024 * 1024 * 400
 
-class Fifo
-  constructor: (@size_limit = INFBUF_CACHE_SIZE)->
-    @hash = {}
-    @keys = []
-    @total_size = 0
-
-  get: (k) -> @hash[k]
-
-  set: (k, v)->
-    return if @hash[k]?
-    while @total_size > @size_limit
-      key_to_del = @keys.shift()
-      @total_size -= @hash[key_to_del].length
-      delete @hash[key_to_del]
-
-    @keys.push k
-    @hash[k] = v
-    @total_size += v.length
-    return
-
-  clear: ->
-    delete @hash[@keys.shift()] while @keys.length
-    @total_size = 0
-    return
-
-
 class BAMReader
   constructor: (bamfile, o = {})->
     @bamfile = require("path").resolve(bamfile)
     @cache_size = o.cache_size or INFBUF_CACHE_SIZE
-    @infbufs = new Fifo(@cache_size)
+    @infbufs = new module.exports.Fifo(@cache_size)
     @fd = fs.openSync(@bamfile, "r")
 
     return if o.from_obj
@@ -43,24 +17,6 @@ class BAMReader
 
   @create: (bamfile)->
     return new BAMReader(bamfile)
-
-  #####################################
-  # restore from object(hash)
-  #####################################
-  @createFromObject: (obj)->
-    reader = new BAMReader(obj.bamfile, from_obj: true, cache_size: obj.cache_size)
-    for k in ["size", "header", "header_offset", "refs"]
-      reader[k] = obj[k]
-    return reader
-      
-
-  #####################################
-  # gets a restorable object(hash)
-  #####################################
-  toObject: ->
-    ret = {}
-    ret[k] = @[k] for k in ["size", "header", "header_offset", "refs", "bamfile", "cache_size"]
-    return ret
 
   #####################################
   # creates obj reading bams in order
@@ -161,11 +117,10 @@ class BAMReader
     return positions
 
   #####################################
-  # creates child iterators
+  # creates child processes
   #####################################
   fork: (o={})->
     o = on_bam: o if typeof o is "function"
-    o.spawn = true
     num = if typeof o.num is "number" and o.num >= 1 then parseInt(o.num) else 2
     positions = @split num
     num = positions.length
@@ -181,15 +136,27 @@ class BAMReader
     delete o.on_finish
     delete o.on_message
 
+    # name of the script to fork
+    if o.script and o.script.match(/^child[a-z_]+/)
+      script = o.script
+      delete o.script
+    else
+      script = "child"
+
+    # stringify functions to pass to child processes
+    o._funcs = []
+    for k, v of o
+      continue if typeof v isnt "function"
+      o[k] = v.toString()
+      o._funcs.push k
+    o.reader = @.toObject()
+
     ended_childs = 0
     envs = []
     for n in [0...num]
-      _o =
-        start : positions[n]
-        end   : positions[n+1]
-        n     : n
-      _o[k] = v for k, v of o
-      child = module.exports.BAMIterator.create(@, _o)
+      # spawning child process
+      child = require("child_process").fork("#{__dirname}/#{script}.js")
+
       child.on "message", (env)->
         if env.ended
           envs[env.n] = env
@@ -199,7 +166,17 @@ class BAMReader
         ended_childs++
         return if ended_childs < num
         on_finish.call(@, envs) if typeof on_finish is "function"
+
+      child.options =
+        start : positions[n]
+        end   : positions[n+1]
+        n     : n
+      child.options[k] = v for k, v of o
+
       childs.push child
+    # send info to child
+    process.nextTick =>
+      child.send child.options for child in childs
     return childs
 
   @fork = (args...)->
@@ -255,5 +232,24 @@ class BAMReader
         return null if read_size is @size
         read_size += read_size
     return true
+
+  #####################################
+  # restore from object(hash)
+  #####################################
+  @createFromObject: (obj)->
+    reader = new BAMReader(obj.bamfile, from_obj: true, cache_size: obj.cache_size)
+    for k in ["size", "header", "header_offset", "refs"]
+      reader[k] = obj[k]
+    return reader
+      
+
+  #####################################
+  # gets a restorable object(hash)
+  #####################################
+  toObject: ->
+    ret = {}
+    ret[k] = @[k] for k in ["size", "header", "header_offset", "refs", "bamfile", "cache_size"]
+    return ret
+
 
 module.exports = BAMReader

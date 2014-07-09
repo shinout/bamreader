@@ -11,6 +11,32 @@ defineGetters = (obj, getters)->
 
 CIGAR = module.exports.CIGAR
 class BAM
+  @createFromSAM = (sam, @reader)->
+    # mimics bam object
+    d = sam.split("\t")
+
+    # native values
+    # "ref_id" and "nref_id" are used for some getter properties
+    bam =
+      qname : d[0]
+      flag  : Number d[1]
+      pos   : Number d[3]
+      mapq  : Number d[4]
+      pnext : Number d[7]
+      tlen  : Number d[8]
+      rname     : if d[2] is "*" then null else d[2]
+      ref_id    : if d[2] is "*" then -1 else d[2]
+      rnext     : if d[6] is "*" then null else d[6]
+      nref_id   : if d[6] is "*" then -1 else d[2]
+      cigar     : if d[5] is "*" then null else d[5]
+      seq       : d[9]
+      qual      : d[10]
+      tagstr_   : d.slice(11).join("\t")
+      sam       : sam
+
+    bam.__proto__ = BAM.prototype
+    return bam
+
   constructor: (buf, @reader)->
     @bytesize = buf.readInt32LE(0, true) + 4
     @ref_id   = buf.readInt32LE 4, true
@@ -63,6 +89,8 @@ class BAM
     ######################
     # BASIC PROPERTIES
     ######################
+    rname: -> if @ref_id  is -1 then null else @reader.refs[@ref_id].name
+    rnext: -> if @nref_id is -1 then null else @reader.refs[@nref_id].name
 
     seq: ->
       return @seq_ if @seq_?
@@ -85,8 +113,6 @@ class BAM
       return @CIGAR_ if @CIGAR_?
       @CIGAR_ = new CIGAR(@cigarbytes, @l_cigar)
     cigar: -> @CIGAR.string
-    rname     : -> if @ref_id  is -1 then null else @reader.refs[@ref_id].name
-    rnext     : -> if @nref_id is -1 then null else @reader.refs[@nref_id].name
     clipped: -> @CIGAR.soft_clipped() or @CIGAR.hard_clipped()
     soft_clipped: -> @CIGAR.soft_clipped()
     hard_clipped: -> @CIGAR.hard_clipped()
@@ -99,19 +125,16 @@ class BAM
     ######################
     # SAM STRING
     ######################
-    sam_rname : -> if @ref_id  is -1 then "*"  else @reader.refs[@ref_id].name
-    sam_rnext : -> if @nref_id is -1 then "*" else if @ref_id is @nref_id then "=" else @reader.refs[@nref_id].name
-    sam_cigar : -> @cigar or "*"
     sam: ->
       return @sam_ if @sam_
       @sam_ = [
         @qname
         @flag
-        @sam_rname
+        if @ref_id  is -1 then "*" else @reader.refs[@ref_id].name
         @pos
         @mapq
-        @sam_cigar
-        @sam_rnext
+        @cigar or "*"
+        if @nref_id is -1 then "*" else if @ref_id is @nref_id then "=" else @reader.refs[@nref_id].name
         @pnext
         @tlen
         @seq
@@ -177,7 +200,24 @@ class BAM
     # TAG PROPERTY
     ######################
     tags: ->
-      return @tags_  if @tags_?
+      if @tagstr_
+        for tag in @tagstr_.split("\t")
+          val = tag.split(":")
+          tag = val[0]
+          type = val[1]
+          switch type
+            when "i","f" then value = Number val[2]
+            when "B"
+              value = val[2].split(",")
+              subtype = value[0]
+              if subtype in ["c","C","s","S","i","I","f"]
+                value = (Number v for v in value)
+                value[0] = subtype
+            else
+              value = val[2]
+          @tags_[tag] = type: type, value: value
+        return @tags_  if @tags_?
+
       tags = {}
       cursor = 0
       buflen = @tagbytes.length
@@ -253,6 +293,6 @@ class BAM
             hLen++ while buf[cursor+hLen] isnt 0x00
             tags[tag] = type: valtype, value: buf.slice(cursor, cursor+hLen).toString("hex")
             cursor+=hLen+1
-      @tags = tags
+      @tags_ = tags
 
 module.exports.BAM = BAM

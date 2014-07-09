@@ -6,8 +6,17 @@ module.exports = (grunt) ->
     coffee:
       compile:
         files:
-          "lib/bamreader.js": ["src/bamreader.coffee", "src/CIGAR.coffee", "src/bam.coffee", "src/bamiterator.coffee", "src/bamdic.coffee"]
+          "lib/bamreader.js": [
+            "src/bamreader.coffee"
+            "src/fifo.coffee"
+            "src/CIGAR.coffee"
+            "src/bam.coffee"
+            "src/bamiterator.coffee"
+            "src/bamdic.coffee"
+            "src/samtools.coffee"
+          ]
           "lib/child.js": "src/child.coffee"
+          "lib/child_samtools.js": "src/child_samtools.coffee"
           "bin/_bamreader": "src/exe.coffee"
     concat:
       options:

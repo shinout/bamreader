@@ -6,20 +6,7 @@ noop = ->
 
 class BAMIterator
   @create = (reader, options = {})->
-    return new BAMIterator(reader, options) unless options.spawn
-
-    # spawning child process
-    delete options.spawn
-    child = require("child_process").fork(__dirname + "/child.js")
-    options.reader = reader.toObject()
-    process.nextTick =>
-      options._funcs = []
-      for k, v of options
-        continue if typeof v isnt "function"
-        options[k] = v.toString()
-        options._funcs.push k
-      child.send(options) # FIXME passing functions
-    return child
+    return new BAMIterator(reader, options)
 
   constructor: (@reader, o={})->
     @offset = if typeof o.start is "number" then o.start else @reader.header_offset
