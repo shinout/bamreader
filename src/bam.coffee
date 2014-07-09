@@ -6,9 +6,40 @@ SEQ_ARR = do ->
       ret.push if c2 is "=" then c1 else c1 + c2
   return ret
 
-defineGetters = (obj, getters)->
-  Object.defineProperty(obj, name, get: fn) for name, fn of getters
+QUAL_ARR = do->
+  ret = {}
+  for i in [0..94]
+    ret[i] = String.fromCharCode(i + 33)
+  return ret
 
+
+KNOWN_TAGS = do->
+  ret = {}
+  for tag in [
+    "AM", "AS"
+    "BC", "BQ"
+    "CC", "CM", "CO", "CP", "CQ", "CS", "CT"
+    "E2",
+    "FI", "FS", "FZ"
+    "H0", "H1", "H2", "HI"
+    "IH"
+    "LB"
+    "MC", "MD", "MQ"
+    "NH", "NM"
+    "OC", "OP", "OQ"
+    "PG", "PQ", "PT", "PU"
+    "QT", "Q2"
+    "R2", "RG", "RT"
+    "SA", "SM"
+    "TC"
+    "U2", "UQ"
+    "XS"
+  ]
+    k = tag.charCodeAt(0) * 256 + tag.charCodeAt(1)
+    ret[k] = tag
+  ret
+
+defineGetters = (obj, getters)-> Object.defineProperty(obj, name, get: fn) for name, fn of getters
 CIGAR = module.exports.CIGAR
 class BAM
   @createFromSAM = (sam, @reader)->
@@ -31,7 +62,8 @@ class BAM
       cigar     : if d[5] is "*" then null else d[5]
       seq       : d[9]
       qual      : d[10]
-      tagstr_   : d.slice(11).join("\t")
+      tagstr    : d.slice(11).join("\t")
+      length    : d[9].length
       sam       : sam
 
     bam.__proto__ = BAM.prototype
@@ -94,24 +126,29 @@ class BAM
 
     seq: ->
       return @seq_ if @seq_?
-      seq = []
-      for byte in @seqbytes
-        seq.push SEQ_ARR[byte]
-      @seq_ = seq.join("")
+      len = @seqbytes.length
+      seq = ""
+      i = 0
+      seq += SEQ_ARR[@seqbytes[i++]] while i < len
+      @seq_ = seq
 
     qual: ->
       return @qual_ if @qual_?
-      qual = []
-      for byte in @qualbytes
-        qual.push String.fromCharCode(byte + 33)
-      @qual_ = qual.join("")
+      len = @length
+      qual = ""
+      i = 0
+      qual += QUAL_ARR[@qualbytes[i++]] while i < len
+      @qual_ = qual
 
     ######################
     # CIGAR PROPERTIES
     ######################
     CIGAR: ->
       return @CIGAR_ if @CIGAR_?
-      @CIGAR_ = new CIGAR(@cigarbytes, @l_cigar)
+      if @cigarbytes
+        @CIGAR_ = new CIGAR(@cigarbytes, @l_cigar)
+      else
+        @CIGAR_ = CIGAR.createFromString(@cigar)
     cigar: -> @CIGAR.string
     clipped: -> @CIGAR.soft_clipped() or @CIGAR.hard_clipped()
     soft_clipped: -> @CIGAR.soft_clipped()
@@ -127,24 +164,19 @@ class BAM
     ######################
     sam: ->
       return @sam_ if @sam_
-      @sam_ = [
-        @qname
-        @flag
-        if @ref_id  is -1 then "*" else @reader.refs[@ref_id].name
-        @pos
-        @mapq
-        @cigar or "*"
-        if @nref_id is -1 then "*" else if @ref_id is @nref_id then "=" else @reader.refs[@nref_id].name
-        @pnext
-        @tlen
-        @seq
-        @qual
+      @sam_ =
+        @qname + "\t" +
+        @flag + "\t" +
+        (if @ref_id  is -1 then "*" else @reader.refs[@ref_id].name) + "\t" +
+        @pos + "\t" +
+        @mapq + "\t" +
+        (@cigar or "*") + "\t" +
+        (if @nref_id is -1 then "*" else if @ref_id is @nref_id then "=" else @reader.refs[@nref_id].name) + "\t" +
+        @pnext + "\t" +
+        @tlen + "\t" +
+        @seq  + "\t" +
+        @qual + "\t" +
         @tagstr
-      ].join("\t")
-
-    tagstr: ->
-      return @tagstr_ if @tagstr_
-      @tagstr_ = ([name, tag.type, if Array.isArray tag.value then tag.value.join(",") else tag.value].join(":") for name,tag of @tags).join("\t")
 
     ######################
     # OPTIONAL PROPERTIES
@@ -193,106 +225,130 @@ class BAM
 
     mean_qual: ->
       total = 0
-      total += byte for byte in @qualbytes
-      return Math.floor(total / @qualbytes.length)
+      len = @length
+      if @qualbytes
+        total += byte for byte in @qualbytes
+      else
+        i = 0
+        while i < len
+          total += @qual.charCodeAt(i) - 33
+      return Math.floor(total / len)
+          
 
     ######################
     # TAG PROPERTY
     ######################
-    tags: ->
-      if @tagstr_
-        for tag in @tagstr_.split("\t")
-          val = tag.split(":")
-          tag = val[0]
-          type = val[1]
-          switch type
-            when "i","f" then value = Number val[2]
-            when "B"
-              value = val[2].split(",")
-              subtype = value[0]
-              if subtype in ["c","C","s","S","i","I","f"]
-                value = (Number v for v in value)
-                value[0] = subtype
-            else
-              value = val[2]
-          @tags_[tag] = type: type, value: value
-        return @tags_  if @tags_?
-
-      tags = {}
+    tagstr: ->
+      return @tagstr_ if @tagstr_
+      tagstr = ""
       cursor = 0
       buflen = @tagbytes.length
       buf = @tagbytes
       loop
-        break if cursor-4 >= buflen
-        tag = buf.slice(cursor, cursor+2).toString("ascii")
+        break if cursor >= buflen
+        tagbyte = buf.readUInt16BE(cursor, true)
+        tagname = KNOWN_TAGS[tagbyte] or buf.slice(cursor, cursor+2).toString("ascii")
+        switch tagname
+          when "NM", "AS", "XS"
+            tagstr +=  tagname + ":i:" + buf.readUInt8(cursor+3, true) + "\t"
+            cursor += 4
+            continue
         cursor+=2
         valtype = String.fromCharCode buf[cursor]
         cursor++
+        type = null
 
         switch valtype
           when "A"
-            tags[tag] = type: valtype, value: String.fromCharCode buf[cursor]
+            value = String.fromCharCode buf[cursor]
             cursor++
           when "c"
-            tags[tag] = type: "i", value: buf.readInt8 cursor
+            value = buf.readInt8 cursor, true
+            type = "i"
             cursor++
           when "C"
-            tags[tag] = type: "i", value: buf.readUInt8 cursor
+            value = buf.readUInt8 cursor, true
+            type = "i"
             cursor++
           when "s"
-            tags[tag] = type: "i", value: buf.readInt16LE cursor
+            value = buf.readInt16LE cursor,true
+            type = "i"
             cursor+=2
           when "S"
-            tags[tag] = type: "i", value: buf.readUInt16LE cursor
+            value = buf.readUInt16LE cursor, true
+            type = "i"
             cursor+=2
           when "i"
-            tags[tag] = type: "i", value: buf.readInt32LE cursor
+            value = buf.readInt32LE cursor, true
             cursor+=4
           when "I"
-            tags[tag] = type: "i", value: buf.readUInt32LE cursor
+            value = buf.readUInt32LE cursor, true
+            type = "i"
             cursor+=4
           when "f"
-            tags[tag] = type: valtype, value: buf.readFloatLE cursor
+            value = buf.readFloatLE cursor, true
             cursor+=4
           when "B"
             subtype = String.fromCharCode buf[cursor]
             cursor++
-            arrayLen = buf.readInt32LE cursor
+            arrayLen = buf.readInt32LE cursor, true
             cursor+=4
             switch subtype
               when "c"
-                tags[tag] = type: valtype, value: (buf.readInt8 cursor+i, true for i in [0...arrayLen])
+                value = (buf.readInt8 cursor+i, true for i in [0...arrayLen])
                 cursor+=arrayLen
               when "C"
-                tags[tag] = type: valtype, value: (buf.readUInt8 cursor+i, true for i in [0...arrayLen])
+                value = (buf.readUInt8 cursor+i, true for i in [0...arrayLen])
                 cursor+=arrayLen
               when "s"
-                tags[tag] = type: valtype, value: (buf.readInt16LE cursor+i*2, true for i in [0...arrayLen])
+                value = (buf.readInt16LE cursor+i*2, true for i in [0...arrayLen])
                 cursor+=arrayLen*2
               when "S"
-                tags[tag] = type: valtype, value: (buf.readUInt16LE cursor+i*2, true for i in [0...arrayLen])
+                value = (buf.readUInt16LE cursor+i*2, true for i in [0...arrayLen])
                 cursor+=arrayLen*2
               when "i"
-                tags[tag] = type: valtype, value: (buf.readInt32LE cursor+i*4, true for i in [0...arrayLen])
+                value = (buf.readInt32LE cursor+i*4, true for i in [0...arrayLen])
                 cursor+=arrayLen*4
               when "I"
-                tags[tag] = type: valtype, value: (buf.readUInt32LE cursor+i*4, true for i in [0...arrayLen])
+                value = (buf.readUInt32LE cursor+i*4, true for i in [0...arrayLen])
                 cursor+=arrayLen*4
               when "f"
-                tags[tag] = type: valtype, value: (buf.readFloatLE cursor+i*4, true for i in [0...arrayLen])
+                value = (buf.readFloatLE cursor+i*4, true for i in [0...arrayLen])
                 cursor+=arrayLen*4
             value.unshift subtype
-
+            value = value.join(",")
           when "Z"
             zLen = 0
             zLen++ while buf[cursor+zLen] isnt 0x00
-            tags[tag] = type: valtype, value: buf.slice(cursor, cursor+zLen).toString("ascii")
+            value = buf.slice(cursor, cursor+zLen).toString("ascii")
             cursor+=zLen+1
           when "H"
             hLen = 0
             hLen++ while buf[cursor+hLen] isnt 0x00
-            tags[tag] = type: valtype, value: buf.slice(cursor, cursor+hLen).toString("hex")
+            value = buf.slice(cursor, cursor+hLen).toString("hex")
             cursor+=hLen+1
-      @tags_ = tags
+          # end of switch
+        tagstr += tagname + ":" + (type or valtype) + ":" + value + "\t"
+        # end of loop
+      @tagstr_ = tagstr.slice(0, -1)
+
+    tags: ->
+      return @tags_ if @tags_
+      for tag in @tagstr.split("\t")
+        val = tag.split(":")
+        tag = val[0]
+        type = val[1]
+        switch type
+          when "i","f" then value = Number val[2]
+          # when "B"
+          #   value = val[2].split(",")
+          #   subtype = value[0]
+          #   if subtype in ["c","C","s","S","i","I","f"]
+          #     value = (Number v for v in value)
+          #     value[0] = subtype
+          else
+            value = val[2]
+        @tags_[tag] = type: type, value: value
+      return @tags_
 
 module.exports.BAM = BAM

@@ -15,21 +15,21 @@ class CIGAR
     return nullobj if buf and buf.length is 0
     @_indel = false
     return if buf is null
-    @arr = []
-    str = []
+    @arr = new Array(l_cigar)
+    str = ""
     i = 0
     while i < l_cigar
-      num  = buf.readUInt32LE(i * 4)
+      num  = buf.readUInt32LE(i * 4, true)
       type = CIGAR_ARR[num & 0x0f]
       @_indel = true if type.match(/[ID]/)
       num  = num>>4
-      @arr.push num: num, type: type
-      str.push num, type
+      @arr[i] = num: num, type: type
+      str += num + type
       i++
-    @string = str.join("")
+    @string = str
 
   @createFromString = (str)->
-    return null if not str or str is "*"
+    return nullobj if not str or str is "*"
     cigar = new CIGAR()
     arr = []
     cigarr = str.split(/([A-Z=])/)[...-1]

@@ -8,7 +8,7 @@ process.on "message", (msg)->
   delete msg._funcs
 
   reader = BAMReader.createFromObject msg.reader
-  msg.env = {} if not msg.env or not msg.$
+  msg.env = msg.$ or {} if not msg.env
   env = msg.env
   env[k] = msg[k] for k in ["start", "end", "n"]
   Object.defineProperty env, "exit",

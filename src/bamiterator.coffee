@@ -49,19 +49,19 @@ class BAMIterator
     chunk = new Buffer(read_size)
     fs.readSync @reader.fd, chunk, 0, read_size, @offset
     [infbuf, i_offsets, d_offsets] = inflateBGZF chunk
-    if infbuf.length is 0
+    infbuf_len = infbuf.length
+    if infbuf_len is 0
       @ended = read_size is @end - @offset
       @pitch += @pitch
       return @_read()
-    buf = infbuf
     i_offset = 0
     current_i_offset = i_offsets.shift()
     current_d_offset = @offset + d_offsets.shift()
     loop
-      break if buf.length < 4
-      bytesize = buf.readInt32LE(0, true) + 4
-      break if buf.length < bytesize
-      bambuf = buf.slice(0, bytesize)
+      break if i_offset + 4 > infbuf_len
+      bytesize = infbuf.readInt32LE(i_offset, true) + 4
+      break if i_offset + bytesize > infbuf_len
+      bambuf = infbuf.slice(i_offset, i_offset + bytesize)
 
       bam = new BAM(bambuf, @reader)
       bam.i_offset = i_offset - current_i_offset
@@ -75,7 +75,6 @@ class BAMIterator
         break if i_offsets[0] is undefined or i_offset < i_offsets[0]
         current_i_offset = i_offsets.shift()
         current_d_offset = @offset + d_offsets.shift()
-      buf = infbuf.slice(i_offset)
     @offset = current_d_offset
     setImmediate @_read.bind @
 

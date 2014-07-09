@@ -165,7 +165,7 @@ class Bam
         @rname
         @pos
         @mapq
-        @cigar || "*"
+        @cigar or "*"
         if @rnext is @rname and @rname isnt "*" then "=" else @rnext
         @pnext
         @tlen
