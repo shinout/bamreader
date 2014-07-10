@@ -42,13 +42,14 @@ KNOWN_TAGS = do->
 defineGetters = (obj, getters)-> Object.defineProperty(obj, name, get: fn) for name, fn of getters
 CIGAR = module.exports.CIGAR
 class BAM
-  @createFromSAM = (sam, @reader)->
+  @createFromSAM = (sam, reader)->
     # mimics bam object
     d = sam.split("\t")
 
     # native values
     # "ref_id" and "nref_id" are used for some getter properties
     bam =
+      reader: reader
       qname : d[0]
       flag  : Number d[1]
       pos   : Number d[3]
@@ -218,10 +219,11 @@ class BAM
       return @tags.NM.value
 
     discordant: ->
-      return null if not @reader or @tlen is 0 or not @reader.tlen_mean or not @reader.tlen_sd
+      return null if not @reader or @tlen is 0 or not @reader.dic
       m = @reader.tlen_mean
       sd = @reader.tlen_sd
-      return @tlen < m - 2*sd or m + 2*sd < @tlen
+      tlen = Math.abs @tlen
+      return tlen < m - 2*sd or m + 2*sd < tlen
 
     mean_qual: ->
       total = 0

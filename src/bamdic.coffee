@@ -15,17 +15,22 @@ BAMReader.prototype.createDic = (op = {}, callback)->
   merged_num = 0
   merging = 0
   finished = false
+  tlen_sample_size = if typeof op.tlen_sample_size is "number" then op.tlen_sample_size else 100000
+  outlier_rate = if typeof op.outlier_rate is "number" then op.outlier_rate  else 0.02
+
   $ =
-    WFILE_HWM      : 1024*1024*20-1
-    MAX_MEMORY_SIZE: 1.2e9
-    tmpfile_inc    : 0
-    outfile        : outfile
-    r_count        : 0
-    w_count        : 0
-    time           : new Date/1000|0
-    debug          : op.debug
-    pool           : {}
-    pool_count     : 0
+    WFILE_HWM        : 1024*1024*20-1
+    MAX_MEMORY_SIZE  : 1.2e9
+    tmpfile_inc      : 0
+    outfile          : outfile
+    r_count          : 0
+    w_count          : 0
+    time             : new Date/1000|0
+    debug            : op.debug
+    pool             : {}
+    pool_count       : 0
+    outlier_rate     : outlier_rate
+    tlen_sample_size : Math.round tlen_sample_size / op.num
 
   # spawn children
   @fork
@@ -33,6 +38,9 @@ BAMReader.prototype.createDic = (op = {}, callback)->
     num: op.num
     pitch: 1024 * 1024 * 4
 
+    start: ($)->
+      $.tlens = new BAMReader.OutlierFilteredMeanDev($.outlier_rate, $.tlen_sample_size)
+      
     # calc md5 and store
     bam: (bam, $)->
       binary = bam.d_offset.toString(2) # binary expression of dOffset
@@ -47,6 +55,11 @@ BAMReader.prototype.createDic = (op = {}, callback)->
         $.pool[key] = []
         $.pool_count++
       $.pool[key].push data
+
+      # mean tlen
+      if bam.unmapped is false and bam.next_unmapped is false and bam.same_strand is false and bam.tlen isnt 0
+        tlen = Math.abs(bam.tlen)
+        $.tlens.add tlen
       $.r_count++
 
     # write to tmpfile
@@ -99,6 +112,11 @@ BAMReader.prototype.createDic = (op = {}, callback)->
 
     end: ($)->
       console.log [$.n, "E", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
+      {sum, squared, n} = $.tlens.precalc()
+      $.tlen_sum     = sum
+      $.tlen_squared = squared
+      $.tlen_n       = n
+      delete $.tlens
 
     finish : ($s)->
       finished = $s
@@ -124,11 +142,26 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       binarize $s, fs.createReadStream(tmpfiles[0], highWaterMark: 1024 * 1024 * 10 -1)
 
   binarize = ($s, rstream)->
+    # calculates tlen statistics information
+    tlen_sum     = 0
+    tlen_squared = 0
+    tlen_n       = 0
+    for $ in $s
+      tlen_sum     += $.tlen_sum
+      tlen_squared += $.tlen_squared
+      tlen_n       += $.tlen_n
+    tlen_mean = tlen_sum / tlen_n
+    tlen_dev  = tlen_squared / tlen_n - tlen_mean * tlen_mean
+    tlen_sd   = Math.sqrt tlen_dev
+    console.log ["M", "T", Math.round(tlen_mean), (new Date/1000|0) - $.time, "mean"].join("\t") if $.debug
+    console.log ["M", "T", Math.round(tlen_sd), (new Date/1000|0) - $.time, "sd"].join("\t") if $.debug
+
+
     l_count = 0
     rstream.setEncoding "utf-8"
     wstream = fs.createWriteStream(outfile, highWaterMark: 1024 * 1024 * 10 -1)
     # writes header
-    idx_header = {tlen_mean: 0, tlen_sd: 0}
+    idx_header = {tlen_mean: Math.round(tlen_mean), tlen_sd: Math.round(tlen_sd), tlen_n: tlen_n, outlier_rate: $.outlier_rate, tlen_sample_size: $.tlen_sample_size}
     idx_header_str = JSON.stringify(idx_header)
     header_buf = new Buffer(idx_header_str.length + 4)
     header_buf.writeUInt32BE(idx_header_str.length, 0)
@@ -162,15 +195,18 @@ BAMReader.prototype.createDic = (op = {}, callback)->
         callback($s) if typeof callback is "function"
 
 BAMReader.prototype.find = (qname, debug)->
-  @dic = new BAMDic(@) unless @dic
   if @dic is null
     throw new Error(".dic file has not been created. reader.createDic() can make the file.")
   return @dic.fetch(qname, debug)
 
 class BAMDic
+  @create = (reader)->
+    idxfile = reader.bamfile + ".dic"
+    return null unless fs.existsSync(idxfile)
+    return new BAMDic(reader)
+
   constructor: (@reader)->
     @idxfile = @reader.bamfile + ".dic"
-    return null unless fs.existsSync(@idxfile)
     @size = fs.statSync(@idxfile).size
     @fd = fs.openSync @idxfile, "r"
 

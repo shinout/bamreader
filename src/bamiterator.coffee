@@ -9,16 +9,22 @@ class BAMIterator
     return new BAMIterator(reader, options)
 
   constructor: (@reader, o={})->
+    if typeof o.end is "function"
+      o.on_end = o.end
+      delete o.end
     @offset = if typeof o.start is "number" then o.start else @reader.header_offset
     @end = if typeof o.end is "number" then o.end else @reader.size
     @pitch = if typeof o.pitch is "number" then o.pitch else DEFAULT_PITCH
     @on_bam = if typeof o.on_bam is "function" then o.on_bam else noop
     @on_end = if typeof o.on_end is "function" then o.on_end else noop
+    @on_start  = if typeof o.on_start is "function" then o.on_start else noop
     @pause  = if typeof o.pause  is "function" then o.pause  else null
     @env = o.env or o.$ or {} # environment to register variables, especially for child processes
     @paused = false
     @ended  = false
-    process.nextTick @_read.bind @
+    process.nextTick =>
+      @on_start(@env)
+      process.nextTick @_read.bind @
 
   on: (name, fn)->
     switch name

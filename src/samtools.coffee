@@ -5,7 +5,9 @@ class SAMTools
   constructor: (@reader, o)->
     o = on_bam: o if typeof o is "function"
     o.on_bam = o.bam if o.bam
-
+    if typeof o.end is "function"
+      o.on_end = o.end
+      delete o.end
     @on_bam = if typeof o.on_bam is "function" then o.on_bam  else ->
     @start = o.start if typeof o.start is "number"
     @end   = o.end   if typeof o.end   is "number"

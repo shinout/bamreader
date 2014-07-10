@@ -15,6 +15,19 @@ class BAMReader
     _readHeader_result = @_readHeader() # @header, @refs, @header_offset is set
     throw "couldn't read header" if null is _readHeader_result
 
+    # reads .dic file
+    # if not exists, @dic is set null
+    @dic = BAMReader.BAMDic.create(@)
+    if @dic
+      @tlen_mean = @dic.header.tlen_mean
+      @tlen_sd   = @dic.header.tlen_sd
+      @total_reads = @dic.total_reads
+    else
+      @tlen_mean = null
+      @tlen_sd   = null
+      @total_reads = null
+
+
   @create: (bamfile)->
     return new BAMReader(bamfile)
 
@@ -125,7 +138,7 @@ class BAMReader
     positions = @split num
     num = positions.length
     # attach "on_"
-    for suffix in ["bam", "end", "finish", "message"]
+    for suffix in ["bam", "start", "end", "finish", "message"]
       o["on_#{suffix}"] = o[suffix] if typeof o[suffix] is "function"
       delete o[suffix]
 
