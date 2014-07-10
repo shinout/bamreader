@@ -39,6 +39,8 @@
           num: num,
           debug: debug
         });
+      } else {
+        return BAMReader.parse_query(ap.arg(0), ap.opt());
       }
     } catch (_error) {
       e = _error;
@@ -48,7 +50,7 @@
   };
 
   showUsage = function(out) {
-    return console[out ? "log" : "error"]("[USAGE]\n\n [create dic]\n\tbamreader [memory-size(MB)] -c <bam file> [-p #process] [--debug]\n\tdefault of #process : 2\n\t\t<examples>\n\t\tbamreader -c foo.bam -p 14\n\t\tbamreader 4000 -c bar.bam -p 8 --debug\n\n [show usage]\n\tbamreader --help");
+    return console[out ? "log" : "error"]("[USAGE]\n [query]\n\tbamreader <query file>\n\n [create dic]\n\tbamreader [memory-size(MB)] -c <bam file> [-p #process] [--debug]\n\tdefault of #process : 2\n\t\t<examples>\n\t\tbamreader -c foo.bam -p 14\n\t\tbamreader 4000 -c bar.bam -p 8 --debug\n\n [show usage]\n\tbamreader --help");
   };
 
   main();

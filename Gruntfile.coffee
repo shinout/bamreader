@@ -15,6 +15,7 @@ module.exports = (grunt) ->
             "src/bamiterator.coffee"
             "src/bamdic.coffee"
             "src/samtools.coffee"
+            "src/queryparser.coffee"
           ]
           "lib/child.js": "src/child.coffee"
           "lib/child_samtools.js": "src/child_samtools.coffee"

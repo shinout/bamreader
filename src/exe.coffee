@@ -23,6 +23,8 @@ main = ->
       num = ap.opt("p")
       reader = BAMReader.create bamfile
       reader.createDic(num: num, debug: debug)
+    else
+      BAMReader.parse_query(ap.arg(0), ap.opt())
 
   catch e
     console.error e.message
@@ -31,6 +33,8 @@ main = ->
 showUsage = (out)->
   console[if out then "log" else "error"] """
   [USAGE]
+   [query]
+  \tbamreader <query file>
 
    [create dic]
   \tbamreader [memory-size(MB)] -c <bam file> [-p #process] [--debug]
