@@ -8,6 +8,11 @@ class SAMTools
     if typeof o.end is "function"
       o.on_end = o.end
       delete o.end
+    if typeof o.finish is "function"
+      o.on_finish = o.finish
+    if typeof o.on_finish is "function"
+      o.on_end = o.on_finish if not o.on_end
+
     @on_bam = if typeof o.on_bam is "function" then o.on_bam  else ->
     @start = o.start if typeof o.start is "number"
     @end   = o.end   if typeof o.end   is "number"
@@ -46,7 +51,10 @@ module.exports.SAMTools = SAMTools
 
 BAMReader = module.exports
 BAMReader.prototype.samtools = (o)->
-  return new SAMTools(@, o)
+  if typeof o.num is "number" and o.num >= 2
+    return @fork_samtools o
+  else
+    return new SAMTools(@, o)
 
 BAMReader.prototype.fork_samtools = (o={})->
   o = on_bam : o if typeof o is "function"

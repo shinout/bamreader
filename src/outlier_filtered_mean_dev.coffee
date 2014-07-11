@@ -32,14 +32,14 @@ class OutlierFilteredMeanDev
       n      : valids
     }
 
-    calc: ->
-      {total, squared, n } = @precalc()
-      mean = sum / n
-      return {
-        mean : mean
-        dev  : squared / n - mean * mean
-        n    : n
-      }
+  calc: ->
+    {sum, squared, n } = @precalc()
+    mean = sum / n
+    return {
+      mean : mean
+      dev  : squared / n - mean * mean
+      n    : n
+    }
 
 # ofmd  = new OutlierFilteredMeanDev(0.05)
 # rt = require("random-tools")

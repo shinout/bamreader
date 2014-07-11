@@ -182,18 +182,22 @@ class BAM
     ######################
     # OPTIONAL PROPERTIES
     ######################
-    pair: (bamObj)->
+    pair: ->
       return null if not @reader or not @multiple
+      return @pair_ if @pair_
       bams = @reader.find(@qname)
       for bam in bams
         continue if @secondary or @supplementary or @flag is bam.flag
         if @next_unmapped
           if bam.unmapped
             bam.reader = @reader
+            @pair_ = bam
             return bam
         else if @nref_id isnt -1 and @pnext is bam.pos and @nref_id is bam.ref_id
             bam.reader = @reader
+            @pair_ = bam
             return bam
+      @pair_ = null
       return null
 
     different_ref: ->

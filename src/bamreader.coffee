@@ -10,11 +10,6 @@ class BAMReader
     @infbufs = new module.exports.Fifo(@cache_size)
     @fd = fs.openSync(@bamfile, "r")
 
-    return if o.from_obj
-    @size = fs.statSync(@bamfile).size
-    _readHeader_result = @_readHeader() # @header, @refs, @header_offset is set
-    throw "couldn't read header" if null is _readHeader_result
-
     # reads .dic file
     # if not exists, @dic is set null
     @dic = BAMReader.BAMDic.create(@)
@@ -27,6 +22,11 @@ class BAMReader
       @tlen_sd   = null
       @total_reads = null
 
+    return if o.from_obj
+
+    @size = fs.statSync(@bamfile).size
+    _readHeader_result = @_readHeader() # @header, @refs, @header_offset is set
+    throw "couldn't read header" if null is _readHeader_result
 
   @create: (bamfile)->
     return new BAMReader(bamfile)
@@ -45,19 +45,17 @@ class BAMReader
     if name is "bam"
       return @createIterator(fn)
 
-   #####################################
+  #####################################
   # reads an alignment with the offsets
   #####################################
   read: (i_offset, d_offset)->
     buf = @infbufs.get d_offset
     if buf
-      buf = buf.slice(i_offset)
-      if buf.length >= 4
-        bytesize = buf.readInt32LE(0, true) + 4
-        # FIXME: longer bam data cannot be restored
-        if buf.length >= bytesize
-          return new module.exports.BAM(buf.slice(0, bytesize))
-    pitch = 512
+      len = buf.length
+      # FIXME: longer bam data cannot be restored
+      if i_offset + 4 <= len and (bytesize = buf.readInt32LE(0, true) + 4) <= len
+        return new module.exports.BAM buf.slice(i_offset, i_offset + bytesize)
+    pitch = 16384
     loop
       pitch += pitch
       read_size = Math.min @size - d_offset, pitch
@@ -245,6 +243,16 @@ class BAMReader
         return null if read_size is @size
         read_size += read_size
     return true
+
+  #####################################
+  # iterate (single or multi)
+  #####################################
+  iterate: (o={})->
+    if typeof o.num is "number" and o.num >= 2
+      return @fork o
+    else
+      return @createIterator o
+
 
   #####################################
   # restore from object(hash)

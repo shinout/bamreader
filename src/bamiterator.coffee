@@ -1,6 +1,6 @@
 fs = require "fs"
 inflateBGZF = require("bgzf").inflate
-DEFAULT_PITCH = 16384
+DEFAULT_PITCH = 16384000
 BAM = module.exports.BAM
 noop = ->
 
@@ -12,6 +12,13 @@ class BAMIterator
     if typeof o.end is "function"
       o.on_end = o.end
       delete o.end
+    if typeof o.finish is "function"
+      o.on_finish = o.finish
+    if typeof o.on_finish is "function"
+      o.on_end = o.on_finish if not o.on_end
+    if typeof o.bam is "function"
+      o.on_bam = o.bam if not o.on_bam
+
     @offset = if typeof o.start is "number" then o.start else @reader.header_offset
     @end = if typeof o.end is "number" then o.end else @reader.size
     @pitch = if typeof o.pitch is "number" then o.pitch else DEFAULT_PITCH
@@ -60,6 +67,11 @@ class BAMIterator
       @ended = read_size is @end - @offset
       @pitch += @pitch
       return @_read()
+
+    for offset,i in d_offsets
+      if i_offsets[i+1]
+        @reader.infbufs.set @offset + offset, infbuf.slice(i_offsets[i], i_offsets[i+1])
+
     i_offset = 0
     current_i_offset = i_offsets.shift()
     current_d_offset = @offset + d_offsets.shift()
@@ -79,8 +91,10 @@ class BAMIterator
       # updating i_offset, d_offset
       loop
         break if i_offsets[0] is undefined or i_offset < i_offsets[0]
-        current_i_offset = i_offsets.shift()
+        next_i_offset = i_offsets.shift()
+        current_i_offset = next_i_offset
         current_d_offset = @offset + d_offsets.shift()
+
     @offset = current_d_offset
     setImmediate @_read.bind @
 
