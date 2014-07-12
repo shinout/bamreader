@@ -1,6 +1,6 @@
 BAMReader = require(__dirname + "/bamreader")
 BAMIterator = BAMReader.BAMIterator
-LSIZE = 12
+LINE_SIZE = 12
 crypto = require("crypto")
 process.on "message", (msg)->
   for k in msg._funcs

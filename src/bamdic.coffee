@@ -1,9 +1,10 @@
+require("termcolor").define
 BAMReader = module.exports
 cp = require("child_process")
 fs = require("fs")
 crypto = require("crypto")
-ESTIMATE_DELTA = 0.0001
-LSIZE = 12
+LINE_SIZE = 12
+DIC_SIZE  = 9
 
 #####################################
 # creates dic
@@ -46,7 +47,7 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       binary = bam.d_offset.toString(2) # binary expression of dOffset
       key = crypto.createHash("md5").update(bam.qname).digest().readUInt32BE(0,  true)
       #bam.qname.match(/[0-9]+/g).join("")
-      data = new Buffer(LSIZE)
+      data = new Buffer(LINE_SIZE)
       data.writeUInt32BE(key, 0, true)
       data.writeUInt32BE(parseInt(binary.slice(-32), 2), 4, true) # lower
       upper = if binary.length > 32 then parseInt(binary.slice(0, -32), 2) else 0
@@ -168,36 +169,58 @@ BAMReader.prototype.createDic = (op = {}, callback)->
     header_buf.write(idx_header_str, 4)
     wstream.write(header_buf)
 
+    # footer info
+    three_byte_idx = new Array(256 * 256 * 256)
+
     # writes body
     remainder = ""
-    ended = false
+    write_ended = false
     read_write = ->
-      return if ended
+      return if write_ended
       d = rstream.read()
       return rstream.once "readable", read_write if d is null
       str = remainder + d
       lines = str.split("\n")
       remainder = lines.pop()
-      buf = new Buffer(LSIZE * lines.length)
-      l_count += lines.length
+      buf = new Buffer(DIC_SIZE * lines.length)
+      for line, i in lines
+        idx = parseInt(line.slice(0, 6), 16)
+        if three_byte_idx[idx]
+          three_byte_idx[idx]++
+        else
+          three_byte_idx[idx] = 1
+        buf.write(line.slice(6), i * DIC_SIZE, "hex")
+
       console.log ["M", "B", l_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug and (l_count % 1e5) < 1000
-      buf.write(line, i * LSIZE, "hex") for line,i in lines
       wstream.write buf, read_write
 
     rstream.once "readable", read_write
     rstream.on "end", ->
-      ended = true
-      wstream.end()
+      # write footer
+      footer_buf = new Buffer(256 * 256 * 256 * 7)
+      offset = 0
+      for v, idx in three_byte_idx
+        continue unless v
+        footer_buf.writeUInt16BE(idx>>8, offset)
+        footer_buf.writeUInt8(idx&0xff, offset + 2)
+        footer_buf.writeUInt32BE(v, offset + 3)
+        offset += 7
+      footer_buf.writeUInt32BE(offset, offset)
+
+      wstream.end(footer_buf.slice(0, offset+4))
+      write_ended = true
 
     wstream.on "finish", ->
       console.log ["M", "B", l_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
       cp.exec "rm #{tmpfiles.join(" ")}", ->
         callback($s) if typeof callback is "function"
 
-BAMReader.prototype.find = (qname, debug)->
+BAMReader.prototype.find = (qname, d_offset_to_filter)->
   if @dic is null
     throw new Error(".dic file has not been created. reader.createDic() can make the file.")
-  return @dic.fetch(qname, debug)
+  unless @dic.three_byte_idx
+    @dic._read_footer()
+  return @dic.fetch(qname, d_offset_to_filter)
 
 class BAMDic
   @create = (reader)->
@@ -218,91 +241,100 @@ class BAMDic
     fs.readSync @fd, _b, 0, headerJSONLen, 4
     @header = JSON.parse(_b.toString("utf-8"))
     @header_offset = headerJSONLen + 4
-    @total_reads = (@size - @header_offset) / LSIZE
-    throw "#{@idxfile} is imcomplete bamdic" if @total_reads isnt parseInt(@total_reads)
 
-  fetch: (qname, debug)->
-    inputMD5Buf = crypto.createHash("md5").update(qname).digest()
+    # calc total reads
+    _b = new Buffer(4)
+    fs.readSync(@fd, _b, 0, 4, @size - 4)
+    @footer_size = _b.readUInt32BE(0)
+    @total_reads = (@size - @header_offset - @footer_size - 4) / DIC_SIZE
+
+  _read_footer: ->
+    footer_size = @footer_size
+    footer = new Buffer(footer_size)
+    fs.readSync(@fd, footer, 0, footer_size, @size - footer_size - 4)
+    i = 0
+    @three_byte_idx = {}
+    total = 0
+    while i < footer_size
+      idx3byte = footer.readUInt16BE(i) * 256 +  footer.readUInt8(i+2)
+      num = footer.readUInt32BE(i+3)
+      total += num
+      @three_byte_idx[idx3byte] = [total, num]
+      i+=7
+
+    @bufs = new module.exports.Fifo(1024 * 1024 * 400)
+
+  fetch: (qname, d_offset_to_filter)->
+    md5_buf = crypto.createHash("md5").update(qname).digest()
     # estimated values
-    inputMD5 = inputMD5Buf.readUInt32BE(0, true)
-    estimates =
-      center : Math.max(1, Math.floor(inputMD5 / 0xffffffff * @total_reads))
-      delta  : Math.floor(@total_reads * ESTIMATE_DELTA)
+    idx = md5_buf.readUInt16BE(0) * 256 + md5_buf.readUInt8(2)
+    obi = md5_buf.readUInt8(3)
 
-    if debug
-      console.error "#{k}: #{v}" for k, v of name: qname, md5: inputMD5, dicfile: @idxfile
-      console.error "#{k}: #{v}" for k, v of estimates
+    idxinfo = @three_byte_idx[idx]
+    return null unless idxinfo
 
-    if delta < 100
-      left = 1
-      right = @total_reads + 1
-    else
-      estimates.left  = Math.max(1, estimates.center - estimates.delta)
-      estimates.right = Math.min(estimates.center + estimates.delta, @total_reads)
-      # LEFT
-      lbuf = new Buffer(LSIZE)
-      fs.readSync @fd, lbuf, 0, 4, LSIZE * (estimates.left - 1) + @header_offset
-      left = if lbuf.readUInt32BE(0, true) < inputMD5 then estimates.left else 1
+    read_num = idxinfo[1]
 
-      # RIGHT
-      rbuf = new Buffer(LSIZE)
-      fs.readSync @fd, rbuf, 0, 4, LSIZE * (estimates.right - 1) + @header_offset
-      right = if inputMD5 < rbuf.readUInt32BE(0, true) then estimates.right else @total_reads + 1
+    unless buf = @bufs.get idx
+      offset = idxinfo[0] - read_num
+      buf = new Buffer(DIC_SIZE * read_num)
+      fs.readSync @fd, buf, 0, DIC_SIZE * read_num, offset * DIC_SIZE + @header_offset
+      @bufs.set idx, buf
 
-    if debug
-      console.error left: left, right: right, reads: @total_reads
-
-    md5 = null
-
+    if read_num is 1
+    # shortcut when only hits one line
+      results = [0] if obi is buf.readUInt8(0, true)
+    # full scanning
+    else if read_num <= 4
+      _i = 0
+      results = []
+      while _i < read_num
+        _p = _i * DIC_SIZE
+        results.push _i if obi is buf.readUInt8(_p, true)
+        _i++
     # binary search
-    iterationCount = 0
-    until inputMD5 is md5
-      iterationCount++
-      currentLineNum = Math.floor((left + right)/2)
-      buf = new Buffer(LSIZE)
-      offset = LSIZE * (currentLineNum-1)
-      fs.readSync @fd, buf, 0, LSIZE, offset + @header_offset
-      md5 = buf.readUInt32BE(0, true)
-      if debug
-        console.error "\t#{k}: #{v}" for k, v of input: inputMD5, current: md5, left: left, right: right, lineNum: currentLineNum
+    else
+      left = 0
+      right = read_num
 
-      if md5 > inputMD5
-        newright = currentLineNum
-        break if newright is right
-        right = newright
-      else
-        newleft = currentLineNum
-        break if newleft is left
-        left = newleft
-
-    console.error "iteration: #{iterationCount}" if debug
-
-    if md5 isnt inputMD5
-      return null
-    results = [buf]
-
-    # search flanking lines
-    for delta in [1, -1]
-      num = currentLineNum
-      console.error "linenum", num if debug
+      md5_o = null
+      itr_count = 0
       loop
-        num += delta
-        break if num < 1 or @total_reads < num
-        console.error "num", num if debug
-        buf = new Buffer(LSIZE)
-        fs.readSync @fd, buf, 0, LSIZE, LSIZE * (num-1) + @header_offset
-        md5 = buf.readUInt32BE(0, true)
-        console.error "md5", md5 if debug
-        break if md5 isnt inputMD5
-        results.push buf
+        itr_count++
+        current = Math.floor((left + right)/2)
+        md5_o = buf.readUInt8(DIC_SIZE * current, true)
+        break if obi is md5_o
+        if md5_o > obi
+          newright = current
+          break if newright is right
+          right = newright
+        else
+          newleft = current
+          break if newleft is left
+          left = newleft
+
+      return null if md5_o isnt obi
+
+      results = [current]
+
+      # search flanking lines
+      for delta in [1, -1]
+        num = current
+        loop
+          num += delta
+          break if num < 0 or num >= read_num
+          md5_o = buf.readUInt8(DIC_SIZE * num, true)
+          break if md5_o isnt obi
+          results.push num
 
     bams = []
-    for buf in results
-      lower = buf.readUInt32BE(4, true)
-      upper = buf.readUInt16BE(8, true)
-      i_offset = buf.readUInt16BE(10, true)
+    for line_i in results
+      _offset = line_i * DIC_SIZE
+      lower = buf.readUInt32BE(_offset + 1, true)
+      upper = buf.readUInt16BE(_offset + 5, true)
       d_offset = if upper then upper * 0x100000000 + lower else lower
-      console.error "#{k}: #{v}" for k, v of d_offset: d_offset, i_offset: i_offset if debug
+      continue if d_offset is d_offset_to_filter
+      i_offset = buf.readUInt16BE(_offset + 7, true)
       bam = @reader.read(i_offset, d_offset)
       bams.push bam if bam and bam.qname is qname
     return bams

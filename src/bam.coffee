@@ -185,7 +185,7 @@ class BAM
     pair: ->
       return null if not @reader or not @multiple
       return @pair_ if @pair_
-      bams = @reader.find(@qname)
+      bams = @reader.find(@qname, @d_offset)
       for bam in bams
         continue if @secondary or @supplementary or @flag is bam.flag
         if @next_unmapped
