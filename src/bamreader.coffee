@@ -9,10 +9,12 @@ class BAMReader
     @cache_size = o.cache_size or INFBUF_CACHE_SIZE
     @infbufs = new module.exports.Fifo(@cache_size)
     @fd = fs.openSync(@bamfile, "r")
+    @nodic = !!o.nodic
 
     # reads .dic file
     # if not exists, @dic is set null
-    @dic = BAMReader.BAMDic.create(@)
+    
+    @dic = if @nodic then null else BAMReader.BAMDic.create(@)
     if @dic
       @tlen_mean = @dic.header.tlen_mean
       @tlen_sd   = @dic.header.tlen_sd
@@ -28,8 +30,8 @@ class BAMReader
     _readHeader_result = @_readHeader() # @header, @refs, @header_offset is set
     throw "couldn't read header" if null is _readHeader_result
 
-  @create: (bamfile)->
-    return new BAMReader(bamfile)
+  @create: (bamfile, o = {})->
+    return new BAMReader(bamfile, o)
 
   #####################################
   # creates obj reading bams in order
@@ -155,11 +157,7 @@ class BAMReader
       script = "child"
 
     # stringify functions to pass to child processes
-    o._funcs = []
-    for k, v of o
-      continue if typeof v isnt "function"
-      o[k] = v.toString()
-      o._funcs.push k
+    BAMReader.makeSendable o
     o.reader = @.toObject()
 
     ended_childs = 0
@@ -258,7 +256,7 @@ class BAMReader
   # restore from object(hash)
   #####################################
   @createFromObject: (obj)->
-    reader = new BAMReader(obj.bamfile, from_obj: true, cache_size: obj.cache_size)
+    reader = new BAMReader(obj.bamfile, from_obj: true, cache_size: obj.cache_size, nodic: obj.nodic)
     for k in ["size", "header", "header_offset", "refs"]
       reader[k] = obj[k]
     return reader
@@ -269,8 +267,7 @@ class BAMReader
   #####################################
   toObject: ->
     ret = {}
-    ret[k] = @[k] for k in ["size", "header", "header_offset", "refs", "bamfile", "cache_size"]
+    ret[k] = @[k] for k in ["size", "header", "header_offset", "refs", "bamfile", "cache_size", "nodic"]
     return ret
-
 
 module.exports = BAMReader

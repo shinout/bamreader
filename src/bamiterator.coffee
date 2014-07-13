@@ -1,3 +1,4 @@
+c = 0
 fs = require "fs"
 inflateBGZF = require("bgzf").inflate
 DEFAULT_PITCH = 16384000
@@ -19,6 +20,7 @@ class BAMIterator
     if typeof o.bam is "function"
       o.on_bam = o.bam if not o.on_bam
 
+    @nocache = !!o.nocache
     @offset = if typeof o.start is "number" then o.start else @reader.header_offset
     @end = if typeof o.end is "number" then o.end else @reader.size
     @pitch = if typeof o.pitch is "number" then o.pitch else DEFAULT_PITCH
@@ -29,9 +31,19 @@ class BAMIterator
     @env = o.env or o.$ or {} # environment to register variables, especially for child processes
     @paused = false
     @ended  = false
+    if o.props
+      @[name] = fn for name, fn of o.props
+
     process.nextTick =>
       @on_start(@env)
-      process.nextTick @_read.bind @
+      @_init_loop()
+
+  _init_loop: ->
+    if @_read()
+      @on_end(@env)
+    else
+      return if @pause and @paused = @pause(@env)
+      setImmediate => @_init_loop()
 
   on: (name, fn)->
     switch name
@@ -44,33 +56,27 @@ class BAMIterator
   resume: ->
     if @paused
       @paused = false
-      if @ended
-        process.nextTick @on_end.bind @, @env
-      else
-        process.nextTick @_read.bind @
+      @_init_loop()
 
   send: (msg)->
     process.send msg if typeof process.send is "function"
 
   _read: ->
+    nocache = @nocache
     read_size = Math.min @end - @offset, @pitch
-    @ended = @ended or read_size <= 0
-    if typeof @pause is "function"
-      @paused = @pause(@ended, @env)
-    return if @paused
-    return @on_end(@env) if @ended
+    return true if read_size <= 0
     chunk = new Buffer(read_size)
     fs.readSync @reader.fd, chunk, 0, read_size, @offset
     [infbuf, i_offsets, d_offsets] = inflateBGZF chunk
     infbuf_len = infbuf.length
     if infbuf_len is 0
-      @ended = read_size is @end - @offset
       @pitch += @pitch
-      return @_read()
+      return read_size is @end - @offset # if true, ended
 
-    for offset,i in d_offsets
-      if i_offsets[i+1]
-        @reader.infbufs.set @offset + offset, infbuf.slice(i_offsets[i], i_offsets[i+1])
+    unless nocache
+      for offset,i in d_offsets
+        if i_offsets[i+1]
+          @reader.infbufs.set @offset + offset, infbuf.slice(i_offsets[i], i_offsets[i+1])
 
     i_offset = 0
     current_i_offset = i_offsets.shift()
@@ -79,7 +85,11 @@ class BAMIterator
       break if i_offset + 4 > infbuf_len
       bytesize = infbuf.readInt32LE(i_offset, true) + 4
       break if i_offset + bytesize > infbuf_len
-      bambuf = infbuf.slice(i_offset, i_offset + bytesize)
+      if nocache
+        bambuf = new Buffer(bytesize)
+        infbuf.copy(bambuf, 0, i_offset, i_offset + bytesize)
+      else
+        bambuf = infbuf.slice(i_offset, i_offset + bytesize)
 
       bam = new BAM(bambuf, @reader)
       bam.i_offset = i_offset - current_i_offset
@@ -95,7 +105,10 @@ class BAMIterator
         current_i_offset = next_i_offset
         current_d_offset = @offset + d_offsets.shift()
 
+    chunk = null
+    if nocache
+      infbuf = null
     @offset = current_d_offset
-    setImmediate @_read.bind @
+    return false
 
 module.exports.BAMIterator = BAMIterator

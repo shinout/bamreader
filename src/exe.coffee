@@ -21,7 +21,7 @@ main = ->
     # create index file
     if ap.opt("c")
       num = ap.opt("p")
-      reader = BAMReader.create bamfile
+      reader = BAMReader.create bamfile, nodic: true
       reader.createDic(num: num, debug: debug)
     else
       BAMReader.parse_query(ap.arg(0), ap.opt())

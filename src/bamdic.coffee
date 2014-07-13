@@ -37,7 +37,8 @@ BAMReader.prototype.createDic = (op = {}, callback)->
   @fork
     $: $
     num: op.num
-    pitch: 1024 * 1024 * 4
+    nocache: true
+    pitch: 1638400
 
     start: ($)->
       $.tlens = new BAMReader.OutlierFilteredMeanDev($.outlier_rate, $.tlen_sample_size)
@@ -64,37 +65,16 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       $.r_count++
 
     # write to tmpfile
-    pause: (ended, $)->
+    pause: ($)->
       memory = process.memoryUsage()
       console.log [$.n, "R", $.r_count, (new Date/1000|0) - $.time, memory.rss].join("\t") if $.debug
-      return false if not ended and memory.rss <= $.MAX_MEMORY_SIZE
-      if $.pool_count is 0 and not ended
+      return false if memory.rss <= $.MAX_MEMORY_SIZE
+      if $.pool_count is 0
         setTimeout =>
           @resume()
         ,1000
         return true
-
-      WCHUNK_SIZE = $.WFILE_HWM - 10000
-      w_data = ""
-      tmpfile = "#{$.outfile}.#{$.n}.#{(++$.tmpfile_inc)}"
-      wstream = require("fs").createWriteStream(tmpfile, highWaterMark: $.WFILE_HWM)
-      _write = ->
-        console.log [$.n, "W", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
-        for key,arr of $.pool
-          w_data += arr.map((data)-> data.toString("hex") + "\n").join("")
-          $.w_count += arr.length
-          $.pool_count--
-          delete $.pool[key]
-          if w_data.length > WCHUNK_SIZE
-            wstream.write w_data, "utf-8", _write
-            w_data = ""
-            return
-        console.log [$.n, "W", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
-        wstream.end(w_data)
-      wstream.on "finish", =>
-        @send tmpfile: tmpfile
-        @resume()
-      _write()
+      @write($, @resume.bind @)
       return true
 
     # merges tmpfiles
@@ -112,12 +92,37 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       tmpfiles = []
 
     end: ($)->
+      @write($, $.exit)
       console.log [$.n, "E", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
       {sum, squared, n} = $.tlens.precalc()
       $.tlen_sum     = sum
       $.tlen_squared = squared
       $.tlen_n       = n
       delete $.tlens
+
+    props:
+      write: ($, cb)->
+        WCHUNK_SIZE = $.WFILE_HWM - 10000
+        w_data = ""
+        tmpfile = "#{$.outfile}.#{$.n}.#{(++$.tmpfile_inc)}"
+        wstream = require("fs").createWriteStream(tmpfile, highWaterMark: $.WFILE_HWM)
+        _write = ->
+          console.log [$.n, "W", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
+          for key,arr of $.pool
+            w_data += arr.map((data)-> data.toString("hex") + "\n").join("")
+            $.w_count += arr.length
+            $.pool_count--
+            delete $.pool[key]
+            if w_data.length > WCHUNK_SIZE
+              wstream.write w_data, "utf-8", _write
+              w_data = ""
+              return
+          console.log [$.n, "W", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
+          wstream.end(w_data)
+        wstream.on "finish", =>
+          @send tmpfile: tmpfile
+          cb()
+        _write()
 
     finish : ($s)->
       finished = $s
@@ -191,6 +196,7 @@ BAMReader.prototype.createDic = (op = {}, callback)->
           three_byte_idx[idx] = 1
         buf.write(line.slice(6), i * DIC_SIZE, "hex")
 
+      l_count += line.length
       console.log ["M", "B", l_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug and (l_count % 1e5) < 1000
       wstream.write buf, read_write
 

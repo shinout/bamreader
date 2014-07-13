@@ -9,6 +9,7 @@ module.exports = (grunt) ->
           "lib/bamreader.js": [
             "src/bamreader.coffee"
             "src/fifo.coffee"
+            "src/function_sendable.coffee"
             "src/outlier_filtered_mean_dev.coffee"
             "src/CIGAR.coffee"
             "src/bam.coffee"

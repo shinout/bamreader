@@ -34,7 +34,9 @@
       debug = ap.opt("debug");
       if (ap.opt("c")) {
         num = ap.opt("p");
-        reader = BAMReader.create(bamfile);
+        reader = BAMReader.create(bamfile, {
+          nodic: true
+        });
         return reader.createDic({
           num: num,
           debug: debug

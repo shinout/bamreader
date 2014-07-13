@@ -2,9 +2,7 @@ BAMReader = require(__dirname + "/bamreader")
 SAMTools = BAMReader.SAMTools
 
 process.on "message", (msg)->
-  for k in msg._funcs
-    msg[k] = eval("(#{msg[k]})")
-  delete msg._funcs
+  BAMReader.parseSendable msg
 
   reader = BAMReader.createFromObject msg.reader
   env = msg.env or msg.$ or {}
