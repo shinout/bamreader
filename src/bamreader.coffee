@@ -9,7 +9,8 @@ class BAMReader
     @cache_size = o.cache_size or INFBUF_CACHE_SIZE
     @infbufs = new module.exports.Fifo(@cache_size)
     @fd = fs.openSync(@bamfile, "r")
-    @nodic = !!o.nodic
+    @nodic   = !!o.nodic
+    @nocache = !!o.nocache
 
     # reads .dic file
     # if not exists, @dic is set null
@@ -51,13 +52,16 @@ class BAMReader
   # reads an alignment with the offsets
   #####################################
   read: (i_offset, d_offset)->
-    buf = @infbufs.get d_offset
-    if buf
-      len = buf.length
-      # FIXME: longer bam data cannot be restored
-      if i_offset + 4 <= len and (bytesize = buf.readInt32LE(0, true) + 4) <= len
-        return new module.exports.BAM buf.slice(i_offset, i_offset + bytesize)
-    pitch = 16384
+    if @nocache
+      pitch = 1000
+    else
+      buf = @infbufs.get d_offset
+      if buf
+        len = buf.length
+        # FIXME: longer bam data cannot be restored
+        if i_offset + 4 <= len and (bytesize = buf.readInt32LE(0, true) + 4) <= len
+          return new module.exports.BAM buf.slice(i_offset, i_offset + bytesize)
+       pitch = 16384
     loop
       pitch += pitch
       read_size = Math.min @size - d_offset, pitch
@@ -78,10 +82,12 @@ class BAMReader
       bam.d_offset = d_offset
 
       # cache
-      d_offsets.pop()
-      for offset,i in d_offsets
-        @infbufs.set d_offset + offset, infbuf.slice(i_offsets[i], i_offsets[i+1])
+      unless @nocache
+        d_offsets.pop()
+        for offset,i in d_offsets
+          @infbufs.set d_offset + offset, infbuf.slice(i_offsets[i], i_offsets[i+1])
       return bam
+
 
   #####################################
   # splits body section into num parts
@@ -267,7 +273,7 @@ class BAMReader
   #####################################
   toObject: ->
     ret = {}
-    ret[k] = @[k] for k in ["size", "header", "header_offset", "refs", "bamfile", "cache_size", "nodic"]
+    ret[k] = @[k] for k in ["size", "header", "header_offset", "refs", "bamfile", "cache_size", "nodic", "nocache"]
     return ret
 
 module.exports = BAMReader

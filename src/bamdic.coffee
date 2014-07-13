@@ -3,8 +3,8 @@ BAMReader = module.exports
 cp = require("child_process")
 fs = require("fs")
 crypto = require("crypto")
-LINE_SIZE = 12
-DIC_SIZE  = 9
+LINE_SIZE = 11
+DIC_SIZE  = 8
 
 #####################################
 # creates dic
@@ -26,6 +26,7 @@ BAMReader.prototype.createDic = (op = {}, callback)->
     outfile          : outfile
     r_count          : 0
     w_count          : 0
+    # prev_count       : 0
     time             : new Date/1000|0
     debug            : op.debug
     pool             : {}
@@ -52,7 +53,9 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       data.writeUInt32BE(key, 0, true)
       data.writeUInt32BE(parseInt(binary.slice(-32), 2), 4, true) # lower
       upper = if binary.length > 32 then parseInt(binary.slice(0, -32), 2) else 0
-      data.writeUInt32BE((upper << 16) + bam.i_offset, 8, true)
+      data.writeUInt8(upper, 8, true)
+      data.writeUInt16BE(bam.i_offset, 9, true)
+      #data.writeUInt32BE((upper << 16) + bam.i_offset, 8, true)
       unless $.pool[key]?
         $.pool[key] = []
         $.pool_count++
@@ -102,6 +105,8 @@ BAMReader.prototype.createDic = (op = {}, callback)->
 
     props:
       write: ($, cb)->
+        #count = $.r_count - $.prev_count
+        #$.prev_count = $.r_count
         WCHUNK_SIZE = $.WFILE_HWM - 10000
         w_data = ""
         tmpfile = "#{$.outfile}.#{$.n}.#{(++$.tmpfile_inc)}"
@@ -109,7 +114,8 @@ BAMReader.prototype.createDic = (op = {}, callback)->
         _write = ->
           console.log [$.n, "W", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
           for key,arr of $.pool
-            w_data += arr.map((data)-> data.toString("hex") + "\n").join("")
+            for data in arr
+              w_data += data.toString("hex") + "\n"
             $.w_count += arr.length
             $.pool_count--
             delete $.pool[key]
@@ -117,6 +123,7 @@ BAMReader.prototype.createDic = (op = {}, callback)->
               wstream.write w_data, "utf-8", _write
               w_data = ""
               return
+          $.pool = {}
           console.log [$.n, "W", $.w_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
           wstream.end(w_data)
         wstream.on "finish", =>
@@ -195,9 +202,8 @@ BAMReader.prototype.createDic = (op = {}, callback)->
         else
           three_byte_idx[idx] = 1
         buf.write(line.slice(6), i * DIC_SIZE, "hex")
-
-      l_count += line.length
-      console.log ["M", "B", l_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug and (l_count % 1e5) < 1000
+      l_count++
+      console.log ["M", "B", l_count, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug and l_count % 10000 is 0
       wstream.write buf, read_write
 
     rstream.once "readable", read_write
@@ -268,7 +274,8 @@ class BAMDic
       @three_byte_idx[idx3byte] = [total, num]
       i+=7
 
-    @bufs = new module.exports.Fifo(1024 * 1024 * 400)
+
+    @bufs = new module.exports.Fifo(1024 * 1024 * 4)
 
   fetch: (qname, d_offset_to_filter)->
     md5_buf = crypto.createHash("md5").update(qname).digest()
@@ -337,7 +344,7 @@ class BAMDic
     for line_i in results
       _offset = line_i * DIC_SIZE
       lower = buf.readUInt32BE(_offset + 1, true)
-      upper = buf.readUInt16BE(_offset + 5, true)
+      upper = buf.readUInt8(_offset + 5, true)
       d_offset = if upper then upper * 0x100000000 + lower else lower
       continue if d_offset is d_offset_to_filter
       i_offset = buf.readUInt16BE(_offset + 7, true)

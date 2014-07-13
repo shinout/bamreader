@@ -1,7 +1,7 @@
 BAMReader = require(__dirname + "/bamreader.js")
 BAMIterator = BAMReader.BAMIterator
 context =
-  LINE_SIZE : 12
+  LINE_SIZE : 11
   crypto : require("crypto")
 
 process.on "message", (msg)->

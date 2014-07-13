@@ -20,7 +20,7 @@ class BAMIterator
     if typeof o.bam is "function"
       o.on_bam = o.bam if not o.on_bam
 
-    @nocache = !!o.nocache
+    @nocache = @reader.nocache or !!o.nocache
     @offset = if typeof o.start is "number" then o.start else @reader.header_offset
     @end = if typeof o.end is "number" then o.end else @reader.size
     @pitch = if typeof o.pitch is "number" then o.pitch else DEFAULT_PITCH
