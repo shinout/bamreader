@@ -33,16 +33,20 @@ BAMReader.prototype.createDic = (op = {}, callback)->
     pool_count       : 0
     outlier_rate     : outlier_rate
     tlen_sample_size : Math.round tlen_sample_size / op.num
+    d_deltas         : [] # broad defbuf lengths
+    last_offset      : 0
 
   # spawn children
   @fork
     $: $
     num: op.num
     nocache: true
-    pitch: 1638400
+    pitch: 8388608
 
     start: ($)->
       $.tlens = new BAMReader.OutlierFilteredMeanDev($.outlier_rate, $.tlen_sample_size)
+      $.d_deltas.push @offset
+      $.last_offset = @offset
       
     # calc md5 and store
     bam: (bam, $)->
@@ -55,7 +59,6 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       upper = if binary.length > 32 then parseInt(binary.slice(0, -32), 2) else 0
       data.writeUInt8(upper, 8, true)
       data.writeUInt16BE(bam.i_offset, 9, true)
-      #data.writeUInt32BE((upper << 16) + bam.i_offset, 8, true)
       unless $.pool[key]?
         $.pool[key] = []
         $.pool_count++
@@ -69,6 +72,8 @@ BAMReader.prototype.createDic = (op = {}, callback)->
 
     # write to tmpfile
     pause: ($)->
+      $.d_deltas.push(@offset - $.last_offset)
+      $.last_offset = @offset
       memory = process.memoryUsage()
       console.log [$.n, "R", $.r_count, (new Date/1000|0) - $.time, memory.rss].join("\t") if $.debug
       return false if memory.rss <= $.MAX_MEMORY_SIZE
@@ -146,7 +151,6 @@ BAMReader.prototype.createDic = (op = {}, callback)->
   # merge first, then binarize
   on_finish = ($s)->
     if tmpfiles.length >= 2
-
       # merge sort (pipe)
       console.log ["M", "M", tmpfiles.length, (new Date/1000|0) - $.time, process.memoryUsage().rss].join("\t") if $.debug
       sort = cp.spawn "sort", ["-m"].concat tmpfiles
@@ -155,6 +159,19 @@ BAMReader.prototype.createDic = (op = {}, callback)->
       binarize $s, fs.createReadStream(tmpfiles[0], highWaterMark: 1024 * 1024 * 10 -1)
 
   binarize = ($s, rstream)->
+    # calculates broad d_offset position
+    d_deltas = []
+    delta = 0
+    for $,i in $s
+      s = $.d_deltas.shift()
+      d_deltas.push s if i is 0
+      for d in $.d_deltas
+        delta += d
+        if delta > 16777215 # 3byte
+          d_deltas.push(delta - d) if d isnt delta
+          delta = d
+    d_deltas.push(delta) if delta isnt 0
+
     # calculates tlen statistics information
     tlen_sum     = 0
     tlen_squared = 0
@@ -169,7 +186,6 @@ BAMReader.prototype.createDic = (op = {}, callback)->
     console.log ["M", "T", Math.round(tlen_mean), (new Date/1000|0) - $.time, "mean"].join("\t") if $.debug
     console.log ["M", "T", Math.round(tlen_sd), (new Date/1000|0) - $.time, "sd"].join("\t") if $.debug
 
-
     l_count = 0
     rstream.setEncoding "utf-8"
     wstream = fs.createWriteStream(outfile, highWaterMark: 1024 * 1024 * 10 -1)
@@ -180,6 +196,17 @@ BAMReader.prototype.createDic = (op = {}, callback)->
     header_buf.writeUInt32BE(idx_header_str.length, 0)
     header_buf.write(idx_header_str, 4)
     wstream.write(header_buf)
+
+    # write d_delta info
+    d_delta_len = d_deltas.length
+    d_delta_buf = new Buffer( 2 + 3 * d_delta_len)
+    d_delta_buf.writeUInt16BE(d_deltas.length, 0)
+    offset = 2
+    for d_delta in d_deltas
+      d_delta_buf.writeUInt16BE(d_delta>>8, offset)
+      d_delta_buf.writeUInt8(d_delta&0xff, offset + 2)
+      offset += 3
+    wstream.write(d_delta_buf)
 
     # footer info
     three_byte_idx = new Array(256 * 256 * 256)
@@ -252,7 +279,27 @@ class BAMDic
     _b = new Buffer(headerJSONLen)
     fs.readSync @fd, _b, 0, headerJSONLen, 4
     @header = JSON.parse(_b.toString("utf-8"))
-    @header_offset = headerJSONLen + 4
+    header_offset = headerJSONLen + 4
+
+    # read d_deltas
+    _b = new Buffer(2)
+    fs.readSync @fd, _b, 0, 2, header_offset
+    d_delta_len = _b.readUInt16BE(0)
+    d_delta_buflen = d_delta_len * 3
+    _b = new Buffer(d_delta_buflen)
+    fs.readSync @fd, _b, 0, d_delta_buflen, header_offset + 2
+    cursor = 0
+    broad_d_offsets = new Array(d_delta_len + 1)
+    pos = 0
+    while cursor < d_delta_len
+      c3 = cursor * 3
+      d_delta = _b.readUInt16BE(c3) * 256 + _b.readUInt8(c3 + 2)
+      pos += d_delta
+      broad_d_offsets[cursor] = pos
+      cursor++
+    broad_d_offsets[cursor] = @reader.size
+    @broad_d_offsets = broad_d_offsets
+    @header_offset = header_offset + 2 + d_delta_buflen
 
     # calc total reads
     _b = new Buffer(4)
@@ -266,37 +313,49 @@ class BAMDic
     fs.readSync(@fd, footer, 0, footer_size, @size - footer_size - 4)
     i = 0
     @three_byte_idx = {}
+    if (footer_size / 7) < 256 * 256 * 64
+      @nums = {}
     total = 0
     while i < footer_size
       idx3byte = footer.readUInt16BE(i) * 256 +  footer.readUInt8(i+2)
       num = footer.readUInt32BE(i+3)
+      @three_byte_idx[idx3byte] = total
+      @nums[idx3byte] = num if @nums
       total += num
-      @three_byte_idx[idx3byte] = [total, num]
       i+=7
-
+    @three_byte_idx[idx3byte+1] = total # saving the last position
 
     @bufs = new module.exports.Fifo(1024 * 1024 * 4)
 
   fetch: (qname, d_offset_to_filter)->
     md5_buf = crypto.createHash("md5").update(qname).digest()
-    # estimated values
     idx = md5_buf.readUInt16BE(0) * 256 + md5_buf.readUInt8(2)
     obi = md5_buf.readUInt8(3)
 
-    idxinfo = @three_byte_idx[idx]
-    return null unless idxinfo
-
-    read_num = idxinfo[1]
-
-    unless buf = @bufs.get idx
-      offset = idxinfo[0] - read_num
+    if buf = @bufs.get idx
+      read_num = buf.length / DIC_SIZE
+    else
+      start = @three_byte_idx[idx]
+      return null unless start?
+      if @nums
+        read_num = @nums[idx]
+      else
+        nx_idx = idx + 1
+        while nx_idx <= 16777216 # 256 * 256 * 256
+          break if end = @three_byte_idx[nx_idx]
+          nx_idx++
+        return null unless end?
+        read_num = end - start
       buf = new Buffer(DIC_SIZE * read_num)
-      fs.readSync @fd, buf, 0, DIC_SIZE * read_num, offset * DIC_SIZE + @header_offset
+      fs.readSync @fd, buf, 0, DIC_SIZE * read_num, start * DIC_SIZE + @header_offset
       @bufs.set idx, buf
 
     if read_num is 1
     # shortcut when only hits one line
-      results = [0] if obi is buf.readUInt8(0, true)
+      if obi is buf.readUInt8(0, true)
+        results = [0]
+      else
+        return null
     # full scanning
     else if read_num <= 4
       _i = 0
@@ -347,7 +406,7 @@ class BAMDic
       upper = buf.readUInt8(_offset + 5, true)
       d_offset = if upper then upper * 0x100000000 + lower else lower
       continue if d_offset is d_offset_to_filter
-      i_offset = buf.readUInt16BE(_offset + 7, true)
+      i_offset = buf.readUInt16BE(_offset + 6, true)
       bam = @reader.read(i_offset, d_offset)
       bams.push bam if bam and bam.qname is qname
     return bams

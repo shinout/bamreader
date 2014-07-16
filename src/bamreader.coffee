@@ -1,7 +1,7 @@
 fs = require("fs")
 inflateBGZF = require("bgzf").inflate
 isValidBGZF = require("bgzf").hasValidHeader
-INFBUF_CACHE_SIZE = 1024 * 1024 * 400
+INFBUF_CACHE_SIZE = 256 * 256 * 256 * 20
 
 class BAMReader
   constructor: (bamfile, o = {})->
@@ -11,6 +11,7 @@ class BAMReader
     @fd = fs.openSync(@bamfile, "r")
     @nodic   = !!o.nodic
     @nocache = !!o.nocache
+    @size = fs.statSync(@bamfile).size
 
     # reads .dic file
     # if not exists, @dic is set null
@@ -27,7 +28,6 @@ class BAMReader
 
     return if o.from_obj
 
-    @size = fs.statSync(@bamfile).size
     _readHeader_result = @_readHeader() # @header, @refs, @header_offset is set
     throw "couldn't read header" if null is _readHeader_result
 
@@ -49,21 +49,43 @@ class BAMReader
       return @createIterator(fn)
 
   #####################################
+  # cache using dic.broad_d_offsets
+  #####################################
+  cache: (d_offset)->
+    return unless @dic
+    broad_d_offsets = @dic.broad_d_offsets
+    current = Math.floor((d_offset - @header_offset)/16777216)
+    loop
+      if (b_d_offset = broad_d_offsets[current]) > d_offset
+        current--
+      else if (b_d_offset_1 = broad_d_offsets[current+1]) <= d_offset
+        current++
+      else
+        break
+    read_size = b_d_offset_1 - b_d_offset
+    chunk = new Buffer(read_size)
+    fs.readSync @fd, chunk, 0, read_size, b_d_offset
+    [infbuf, i_offsets, d_offsets] = inflateBGZF chunk
+    d_offsets.pop()
+    for offset,i in d_offsets
+      @infbufs.set b_d_offset + offset, infbuf.slice(i_offsets[i], i_offsets[i+1])
+
+  #####################################
   # reads an alignment with the offsets
   #####################################
   read: (i_offset, d_offset)->
-    if @nocache
-      pitch = 1000
-    else
+    unless @nocache
       buf = @infbufs.get d_offset
-      if buf
-        len = buf.length
-        # FIXME: longer bam data cannot be restored
-        if i_offset + 4 <= len and (bytesize = buf.readInt32LE(0, true) + 4) <= len
-          return new module.exports.BAM buf.slice(i_offset, i_offset + bytesize)
-       pitch = 16384
+      unless buf
+        @cache d_offset
+        buf = @infbufs.get d_offset
+      len = buf.length
+      # FIXME: longer bam data cannot be restored
+      if i_offset + 4 <= len and (bytesize = buf.readInt32LE(0, true) + 4) <= len
+        return new module.exports.BAM buf.slice(i_offset, i_offset + bytesize)
+
+    pitch = 1000
     loop
-      pitch += pitch
       read_size = Math.min @size - d_offset, pitch
       chunk = new Buffer(read_size)
       fs.readSync @fd, chunk, 0, read_size, d_offset
@@ -71,21 +93,17 @@ class BAMReader
       infbuf = infbuf.slice(i_offset)
       if infbuf.length < 4
         throw "couldn't fetch bam" if read_size is @size - d_offset
+        pitch += pitch
         continue
       bytesize = infbuf.readInt32LE(0, true) + 4
       if infbuf.length < bytesize
         throw "couldn't fetch bam" if read_size is @size - d_offset
+        pitch += pitch
         continue
       bambuf = infbuf.slice(0, bytesize)
       bam = new module.exports.BAM(bambuf, @)
       bam.i_offset = i_offset
       bam.d_offset = d_offset
-
-      # cache
-      unless @nocache
-        d_offsets.pop()
-        for offset,i in d_offsets
-          @infbufs.set d_offset + offset, infbuf.slice(i_offsets[i], i_offsets[i+1])
       return bam
 
 
@@ -167,7 +185,7 @@ class BAMReader
     o.reader = @.toObject()
 
     ended_childs = 0
-    envs = []
+    envs = new Array(num)
     for n in [0...num]
       # spawning child process
       child = require("child_process").fork("#{__dirname}/#{script}.js")
